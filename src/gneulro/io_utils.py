@@ -8,8 +8,9 @@ import pandas as pd
 from gneulro.config import CRS_METRIC, CRS_WGS
 
 # 배포본마다 다른 컬럼명 후보 (매핑 결과는 로드 시 출력 — 다르면 사용자에게 확인)
+# GIS건물통합정보(AL_D010) 실측 확인: 높이=A16(m, 다수 결측), 지상층수=A26. A15는 면적이라 층수 아님.
 HEIGHT_CANDIDATES = ["height", "HEIGHT", "A16", "BULD_HG", "높이"]
-FLOOR_CANDIDATES = ["GRND_FLR", "grnd_flr", "A15", "GROUND_FLO", "지상층수", "층수"]
+FLOOR_CANDIDATES = ["GRND_FLR", "grnd_flr", "GROUND_FLO", "A26", "지상층수", "층수"]
 LAT_CANDIDATES = ["위도", "lat", "LAT", "latitude", "Y좌표"]
 LON_CANDIDATES = ["경도", "lon", "lng", "LON", "longitude", "X좌표"]
 
