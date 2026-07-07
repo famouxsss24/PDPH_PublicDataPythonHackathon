@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: gneulro-db
+    environment:
+      POSTGRES_USER: gneulro
+      POSTGRES_PASSWORD: gneulro
+      POSTGRES_DB: gneulro
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

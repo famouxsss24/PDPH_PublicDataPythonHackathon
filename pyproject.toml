@@ -1,0 +1,37 @@
+[project]
+name = "gneulro"
+version = "0.1.0"
+description = "그늘로 — 태양을 피하는 그늘 경로 내비게이션 (노원구)"
+requires-python = ">=3.11"
+dependencies = [
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "pyproj",
+    "pysolar",
+    "osmnx>=1.9",
+    "networkx",
+    "fastapi",
+    "uvicorn",
+    "psycopg2-binary",
+    "geoalchemy2",
+    "statsmodels",
+    "matplotlib",
+    "pyarrow",
+]
+
+[project.optional-dependencies]
+ml = ["lightgbm", "shap"]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

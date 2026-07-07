@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>그늘로 — 태양을 피하는 길찾기</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { margin: 0; font-family: 'Malgun Gothic', sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  #topbar { padding: 8px 12px; background: #12275b; color: #fff; display: flex; gap: 14px; align-items: center; }
+  #topbar label { font-size: 14px; }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #map { flex: 1; }
+  #panel { width: 300px; padding: 12px; overflow-y: auto; background: #f7f8fb; font-size: 14px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  td, th { border: 1px solid #ccc; padding: 4px 6px; text-align: center; }
+  .bar { background: #f4a63a; height: 14px; margin: 2px 0; }
+  .barrow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .err { color: #c0392b; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <b>그늘로</b>
+  <label>시간대 <select id="hour">
+    <option>10</option><option>13</option><option selected>14</option><option>15</option><option>17</option>
+  </select>시</label>
+  <label>그늘 선호도 β <input type="range" id="beta" min="0" max="3" step="0.5" value="2">
+    <span id="betaVal">2.0</span></label>
+  <button id="reset">초기화</button>
+</div>
+<div id="main">
+  <div id="map"></div>
+  <div id="panel">
+    <p id="hint">지도를 두 번 클릭해 출발·도착 지점을 정하세요.</p>
+    <div id="routes"></div>
+    <div id="departure"></div>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([37.6195, 127.0596], 15);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { attribution: '&copy; OpenStreetMap' }).addTo(map);
+
+const hourSel = document.getElementById('hour'), betaInp = document.getElementById('beta');
+const routesDiv = document.getElementById('routes'), depDiv = document.getElementById('departure');
+let shadeLayer = null, markers = [], lines = [], clicks = [];
+
+function showError(msg) { routesDiv.innerHTML = '<p class="err">' + msg + '</p>'; }
+
+async function loadShade() {
+  try {
+    const res = await fetch('/api/shade?hour=' + hourSel.value);
+    if (!res.ok) throw new Error();
+    const gj = await res.json();
+    if (shadeLayer) map.removeLayer(shadeLayer);
+    shadeLayer = L.geoJSON(gj, { style: { color: '#12275b', weight: 0, fillColor: '#12275b', fillOpacity: 0.35 } }).addTo(map);
+  } catch (e) { showError('그늘 데이터를 불러오지 못했습니다.'); }
+}
+
+async function requestRoute() {
+  const [s, t] = clicks;
+  const qs = `start_lat=${s.lat}&start_lon=${s.lng}&end_lat=${t.lat}&end_lon=${t.lng}`;
+  try {
+    const res = await fetch(`/api/route?${qs}&hour=${hourSel.value}&beta=${betaInp.value}`);
+    if (!res.ok) throw new Error((await res.json()).detail);
+    const data = await res.json();
+    lines.forEach(l => map.removeLayer(l)); lines = [];
+    lines.push(L.polyline(data.shortest.coords, { color: '#e03131', weight: 3 }).addTo(map));
+    lines.push(L.polyline(data.shade.coords, { color: '#1971c2', weight: 6, opacity: 0.85 }).addTo(map));
+    routesDiv.innerHTML =
+      '<table><tr><th></th><th style="color:#e03131">최단</th><th style="color:#1971c2">그늘</th></tr>' +
+      `<tr><td>거리</td><td>${data.shortest.dist_m}m</td><td>${data.shade.dist_m}m</td></tr>` +
+      `<tr><td>시간</td><td>${data.shortest.time_min}분</td><td>${data.shade.time_min}분</td></tr>` +
+      `<tr><td>그늘</td><td>${data.shortest.shade_pct}%</td><td>${data.shade.shade_pct}%</td></tr></table>`;
+    loadDeparture(qs);
+  } catch (e) { showError(e.message || '경로 계산에 실패했습니다.'); }
+}
+
+async function loadDeparture(qs) {
+  try {
+    const res = await fetch('/api/departure?' + qs);
+    if (!res.ok) throw new Error();
+    const d = await res.json();
+    const maxE = Math.max(...d.curve.map(c => c.exposure_m), 1);
+    let html = `<p><b>추천 출발 ${d.best.t}</b> (노출 ${d.best.exposure_m}m)<br>` +
+      `피해야 할 시각 ${d.worst.t} (노출 ${d.worst.exposure_m}m)</p>`;
+    for (const c of d.curve) {
+      if (!c.t.endsWith(':00') && !c.t.endsWith(':30')) continue;  // 30분 간격만 표시
+      html += `<div class="barrow"><span style="width:42px">${c.t}</span>` +
+        `<div class="bar" style="width:${Math.round(c.exposure_m / maxE * 170)}px"></div>` +
+        `<span>${c.exposure_m}</span></div>`;
+    }
+    depDiv.innerHTML = html;
+  } catch (e) { depDiv.innerHTML = '<p class="err">출발시각 추천을 불러오지 못했습니다.</p>'; }
+}
+
+function resetAll() {
+  clicks = [];
+  markers.forEach(m => map.removeLayer(m)); markers = [];
+  lines.forEach(l => map.removeLayer(l)); lines = [];
+  routesDiv.innerHTML = ''; depDiv.innerHTML = '';
+}
+
+map.on('click', e => {
+  if (clicks.length >= 2) resetAll();          // 3회째 클릭이면 초기화
+  clicks.push(e.latlng);
+  markers.push(L.marker(e.latlng).addTo(map));
+  if (clicks.length === 2) requestRoute();
+});
+
+hourSel.onchange = () => { loadShade(); if (clicks.length === 2) requestRoute(); };
+betaInp.oninput = () => { document.getElementById('betaVal').textContent = (+betaInp.value).toFixed(1); };
+betaInp.onchange = () => { if (clicks.length === 2) requestRoute(); };
+document.getElementById('reset').onclick = resetAll;
+
+loadShade();
+</script>
+</body>
+</html>

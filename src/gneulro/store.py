@@ -1,0 +1,55 @@
+"""저장소 추상화 — USE_POSTGIS 환경변수에 따라 PostGIS 또는 GeoParquet에 저장한다."""
+
+import json
+import os
+from pathlib import Path
+
+import geopandas as gpd
+
+from gneulro.config import CRS_WGS, DATA_PROCESSED
+
+
+def _load_env() -> None:
+    """프로젝트 루트의 .env 파일을 읽어 환경변수로 등록한다 (이미 있으면 유지)."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+class Store:
+    """공간 레이어 저장/로드를 담당한다. PostGIS와 Parquet 두 백엔드의 인터페이스가 같다."""
+
+    def __init__(self):
+        """환경변수(USE_POSTGIS, POSTGRES_URL)를 읽어 백엔드를 결정한다."""
+        _load_env()
+        self.use_postgis = os.getenv("USE_POSTGIS", "false").lower() == "true"
+        if self.use_postgis:
+            from sqlalchemy import create_engine
+
+            self.engine = create_engine(os.environ["POSTGRES_URL"])
+
+    def save_layer(self, gdf: gpd.GeoDataFrame, name: str) -> None:
+        """레이어를 PostGIS 테이블 또는 processed/{name}.parquet로 저장한다."""
+        if self.use_postgis:
+            gdf.to_postgis(name, self.engine, if_exists="replace", index=False)
+        else:
+            DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
+            gdf.to_parquet(DATA_PROCESSED / f"{name}.parquet")
+
+    def load_layer(self, name: str) -> gpd.GeoDataFrame:
+        """저장된 레이어를 GeoDataFrame으로 읽는다."""
+        if self.use_postgis:
+            return gpd.read_postgis(f'SELECT * FROM "{name}"', self.engine, geom_col="geometry")
+        return gpd.read_parquet(DATA_PROCESSED / f"{name}.parquet")
+
+    def layer_geojson(self, name: str, simplify_m: float = 2.0) -> dict:
+        """레이어를 4326 변환·단순화 후 GeoJSON FeatureCollection dict로 반환한다 (API용)."""
+        gdf = self.load_layer(name)
+        gdf.geometry = gdf.geometry.simplify(simplify_m)
+        gdf = gdf.to_crs(CRS_WGS)
+        return json.loads(gdf.to_json())
