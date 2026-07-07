@@ -2,7 +2,7 @@
 
 import networkx as nx
 
-from gneulro.graph import best_paths
+from gneulro.graph import _turn_word, best_paths, route_steps
 
 
 def toy_graph() -> nx.MultiDiGraph:
@@ -32,3 +32,26 @@ def test_beta_large_picks_shade():
     assert result["shade"]["dist_m"] == 200
     assert result["shade"]["shade_pct"] == 100
     assert result["shortest"]["dist_m"] == 150
+
+
+def test_turn_word_thresholds():
+    """방위각 변화량이 직진/좌·우회전/유턴으로 올바르게 분류돼야 한다."""
+    assert _turn_word(0, 10) == "직진"
+    assert _turn_word(0, 90) == "우회전"
+    assert _turn_word(0, 270) == "좌회전"  # 270° = -90°
+    assert _turn_word(0, 180) == "유턴"
+    assert _turn_word(350, 10) == "직진"  # 0° 경계 넘어도 직진
+
+
+def test_route_steps_merges_straight():
+    """같은 도로명 직진 구간은 한 안내로 합쳐져야 한다."""
+    G = nx.MultiDiGraph()
+    for i, (x, y) in enumerate([(0, 0), (0, 0.001), (0, 0.002), (0.001, 0.002)]):
+        G.add_node(i, x=x, y=y)
+    G.add_edge(0, 1, length=100.0, name="동일로")
+    G.add_edge(1, 2, length=100.0, name="동일로")  # 같은 길 직진 → 병합
+    G.add_edge(2, 3, length=50.0, name="상계로")  # 우회전
+    steps = route_steps(G, [0, 1, 2, 3])
+    assert len(steps) == 2
+    assert steps[0]["name"] == "동일로" and steps[0]["dist_m"] == 200
+    assert steps[1]["turn"] == "우회전" and steps[1]["name"] == "상계로"

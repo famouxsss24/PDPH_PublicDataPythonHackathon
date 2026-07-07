@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 from gneulro.config import BETA_DEFAULT, CRS_WGS, HOURS
 from gneulro.departure import exposure_curve, recommend
-from gneulro.graph import load_graph, route_pair, shade_route_nodes
+from gneulro.graph import load_graph, route_options, route_pair, shade_route_nodes
+from gneulro.places import load_places, search_places
 from gneulro.store import Store
 
 app = FastAPI(title="그늘로 API", description="태양을 피하는 그늘 경로 내비게이션")
@@ -27,6 +28,7 @@ except Exception as exc:
 
 _shade_cache: dict[int, dict] = {}
 _grid_cache: dict[int, dict] = {}
+_places = load_places()  # 08_places 산출물 (없으면 빈 목록 → 검색만 비활성)
 
 
 def _check_hour(hour: int) -> None:
@@ -103,6 +105,51 @@ def api_route(
     except nx.NodeNotFound:
         raise HTTPException(404, detail="출발/도착 지점을 도로망에 연결하지 못했습니다.") from None
     return {"hour": hour, "beta": beta, **result}
+
+
+_static_cache: dict[str, dict] = {}
+
+
+@app.get("/api/buildings")
+def api_buildings() -> dict:
+    """3D 압출용 건물 footprint + height_eff GeoJSON (1m 단순화, 시작 후 첫 호출에 캐시)."""
+    if "buildings" not in _static_cache:
+        _static_cache["buildings"] = store.layer_geojson("buildings", simplify_m=1.0)
+    return _static_cache["buildings"]
+
+
+@app.get("/api/shade_frames")
+def api_shade_frames() -> dict:
+    """그림자 애니메이션 프레임(07~19시 매시) GeoJSON — 09_shadow_frames 산출물."""
+    if "frames" not in _static_cache:
+        try:
+            _static_cache["frames"] = store.layer_geojson("shadows_anim", simplify_m=3.0)
+        except Exception:
+            raise HTTPException(
+                503, detail="그림자 프레임이 아직 없습니다. pipeline/09_shadow_frames.py를 실행하세요."
+            ) from None
+    return _static_cache["frames"]
+
+
+@app.get("/api/places")
+def api_places(q: str = "") -> dict:
+    """장소 이름 검색 — 역·동네·학교·공원·아파트 등 (08_places 색인 기반)."""
+    return {"results": search_places(q, _places), "total": len(_places)}
+
+
+@app.get("/api/routes")
+def api_routes(
+    start_lat: float, start_lon: float, end_lat: float, end_lon: float, hour: int = 14
+) -> dict:
+    """최단 + 그늘 등급별(40/60/80%+) 경로 목록과 추천 경로를 반환한다."""
+    _check_hour(hour)
+    try:
+        result = route_options(G, (start_lat, start_lon), (end_lat, end_lon), hour)
+    except nx.NetworkXNoPath:
+        raise HTTPException(404, detail="두 지점을 잇는 보행 경로를 찾지 못했습니다.") from None
+    except nx.NodeNotFound:
+        raise HTTPException(404, detail="출발/도착 지점을 도로망에 연결하지 못했습니다.") from None
+    return {"hour": hour, **result}
 
 
 @app.get("/api/departure")
