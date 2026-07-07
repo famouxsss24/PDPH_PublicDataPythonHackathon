@@ -17,6 +17,8 @@ dependencies = [
     "statsmodels",
     "matplotlib",
     "pyarrow",
+    "scikit-learn",  # osmnx nearest_nodes(비투영 그래프)가 요구
+    "openpyxl",  # 공공데이터 xlsx 로드용
 ]
 
 [project.optional-dependencies]

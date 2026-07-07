@@ -3,6 +3,7 @@
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely import STRtree, get_parts
 from shapely.geometry import MultiPolygon, box
 
 from gneulro.config import CRS_METRIC, GRID_SIZE_M, PLACE
@@ -32,6 +33,19 @@ def make_grid(boundary: gpd.GeoDataFrame, size_m: float = GRID_SIZE_M) -> gpd.Ge
 
 
 def shade_ratio(grid: gpd.GeoDataFrame, shadow: MultiPolygon) -> pd.Series:
-    """셀별 그늘율(교차면적/셀면적, 0~1)을 계산해 Series로 반환한다."""
-    inter_area = grid.geometry.intersection(shadow).area
-    return (inter_area / grid.geometry.area).clip(0.0, 1.0)
+    """셀별 그늘율(교차면적/셀면적, 0~1)을 계산해 Series로 반환한다.
+
+    통짜 MultiPolygon과 셀을 하나씩 교차하면 느리므로, 그림자를 개별 폴리곤으로
+    풀고 STRtree로 겹칠 가능성이 있는 조각만 교차한다 (graph.py와 같은 기법).
+    dissolve된 조각끼리는 겹치지 않으므로 면적 합산이 정확하다.
+    """
+    parts = get_parts(shadow)
+    tree = STRtree(parts)
+    ratios = np.zeros(len(grid))
+    for i, cell in enumerate(grid.geometry):
+        idx = tree.query(cell)
+        if len(idx) == 0:
+            continue
+        inter = sum(cell.intersection(parts[j]).area for j in idx)
+        ratios[i] = min(inter / cell.area, 1.0)
+    return pd.Series(ratios, index=grid.index)

@@ -5,117 +5,518 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>그늘로 — 태양을 피하는 길찾기</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <style>
-  body { margin: 0; font-family: 'Malgun Gothic', sans-serif; display: flex; flex-direction: column; height: 100vh; }
-  #topbar { padding: 8px 12px; background: #12275b; color: #fff; display: flex; gap: 14px; align-items: center; }
-  #topbar label { font-size: 14px; }
-  #main { flex: 1; display: flex; min-height: 0; }
-  #map { flex: 1; }
-  #panel { width: 300px; padding: 12px; overflow-y: auto; background: #f7f8fb; font-size: 14px; }
-  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
-  td, th { border: 1px solid #ccc; padding: 4px 6px; text-align: center; }
-  .bar { background: #f4a63a; height: 14px; margin: 2px 0; }
-  .barrow { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-  .err { color: #c0392b; }
+  :root {
+    --ink: #1a2340;          /* 본문 잉크 */
+    --shade: #2f3e7c;        /* 그림자 남색 */
+    --shade-route: #2563eb;  /* 그늘 경로 파랑 */
+    --sun: #ff8a3d;          /* 태양 주황 */
+    --hot: #ef4444;          /* 최단(땡볕) 빨강 */
+    --card: rgba(255,255,255,.86);
+    --line: rgba(26,35,64,.12);
+    --radius: 16px;
+    --shadow-lg: 0 12px 40px rgba(26,35,64,.18), 0 2px 8px rgba(26,35,64,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: Pretendard, 'Malgun Gothic', sans-serif; color: var(--ink); }
+  #map { position: fixed; inset: 0; background: #eef0e9; }
+  .leaflet-container { font: inherit; }
+
+  /* ---------- 공통 카드 (글래스) ---------- */
+  .card {
+    background: var(--card);
+    backdrop-filter: blur(14px) saturate(1.4);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,.65);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* ---------- 좌상단: 브랜드 + 컨트롤 ---------- */
+  #ctrl {
+    position: fixed; top: 16px; left: 16px; z-index: 1000;
+    width: 316px; padding: 16px 18px 14px;
+  }
+  #brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  #brand .logo {
+    width: 38px; height: 38px; border-radius: 12px; flex: none;
+    background: linear-gradient(140deg, #ffd166 0%, var(--sun) 45%, var(--shade) 46%, #1a2340 100%);
+    display: grid; place-items: center; font-size: 19px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
+  }
+  #brand h1 { font-size: 19px; margin: 0; letter-spacing: -.02em; }
+  #brand small { display: block; font-size: 11.5px; font-weight: 500; color: #6b7396; margin-top: 1px; }
+
+  .sec-label { font-size: 11.5px; font-weight: 700; color: #8a90ab; letter-spacing: .06em; margin: 13px 0 6px; }
+
+  /* 시간대 세그먼트 */
+  #hours { display: flex; gap: 4px; }
+  #hours button {
+    flex: 1; padding: 7px 0 5px; border: 0; border-radius: 10px; cursor: pointer;
+    background: rgba(26,35,64,.05); color: #59617f; font: inherit; font-size: 13px; font-weight: 600;
+    transition: all .18s ease; line-height: 1.15;
+  }
+  #hours button .sun-ico { display: block; font-size: 13px; }
+  #hours button:hover { background: rgba(26,35,64,.10); }
+  #hours button.on {
+    background: linear-gradient(160deg, var(--sun), #ff6b2c); color: #fff;
+    box-shadow: 0 4px 12px rgba(255,120,50,.4);
+  }
+  #playRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #play {
+    border: 0; border-radius: 10px; cursor: pointer; padding: 7px 12px;
+    background: var(--ink); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600;
+    display: flex; gap: 6px; align-items: center; transition: transform .15s;
+  }
+  #play:hover { transform: translateY(-1px); }
+  #play.playing { background: var(--hot); }
+  #sunmeta { font-size: 11.5px; color: #6b7396; }
+
+  /* β 슬라이더 */
+  #betaRow { display: flex; align-items: center; gap: 10px; }
+  #beta { flex: 1; accent-color: var(--shade-route); height: 4px; }
+  #betaVal {
+    min-width: 40px; text-align: center; font-weight: 700; font-size: 13px;
+    background: rgba(37,99,235,.1); color: var(--shade-route); border-radius: 8px; padding: 3px 0;
+  }
+  #betaHint { font-size: 11px; color: #8a90ab; margin-top: 4px; }
+
+  /* 레이어 토글 + 초기화 */
+  #btnRow { display: flex; gap: 8px; margin-top: 12px; }
+  .tbtn {
+    flex: 1; padding: 8px 0; border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+    background: #fff; color: #59617f; font: inherit; font-size: 12.5px; font-weight: 600; transition: all .15s;
+  }
+  .tbtn:hover { border-color: #b9bed4; }
+  .tbtn.on { background: var(--shade); border-color: var(--shade); color: #fff; }
+
+  /* ---------- 안내 칩 (지도 상단 중앙) ---------- */
+  #hint {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 1000;
+    padding: 9px 18px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
+    display: flex; gap: 8px; align-items: center; white-space: nowrap;
+    transition: opacity .3s;
+  }
+  #hint .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--sun); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+
+  /* ---------- 우측: 결과 패널 ---------- */
+  #panel {
+    position: fixed; top: 16px; right: 16px; bottom: 16px; z-index: 1000;
+    width: 336px; padding: 18px; overflow-y: auto; scrollbar-width: thin;
+    display: none;
+  }
+  #panel.show { display: block; animation: slidein .35s cubic-bezier(.2,.9,.3,1.1); }
+  @keyframes slidein { from { opacity: 0; transform: translateX(28px); } }
+  #panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 7px; }
+  #panel h2 .chip { font-size: 11px; font-weight: 700; background: rgba(26,35,64,.07); color: #59617f; border-radius: 6px; padding: 2px 7px; }
+
+  .route-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rcard { border-radius: 13px; padding: 12px 13px; color: #fff; position: relative; overflow: hidden; }
+  .rcard.short { background: linear-gradient(155deg, #f97316, var(--hot)); }
+  .rcard.shade { background: linear-gradient(155deg, #3b82f6, #1d4ed8); }
+  .rcard .name { font-size: 12px; font-weight: 700; opacity: .9; display: flex; gap: 5px; align-items: center; }
+  .rcard .big { font-size: 23px; font-weight: 800; margin: 5px 0 1px; letter-spacing: -.02em; }
+  .rcard .sub { font-size: 11.5px; opacity: .85; line-height: 1.5; }
+  .rcard .shadebar { margin-top: 8px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.28); overflow: hidden; }
+  .rcard .shadebar i { display: block; height: 100%; background: #fff; border-radius: 3px; transition: width .6s ease; }
+
+  #verdict {
+    margin-top: 10px; padding: 11px 13px; border-radius: 12px; font-size: 13px; line-height: 1.55;
+    background: linear-gradient(135deg, rgba(37,99,235,.09), rgba(47,62,124,.07));
+    border: 1px solid rgba(37,99,235,.18);
+  }
+  #verdict b { color: var(--shade-route); }
+
+  /* 출발시각 차트 */
+  #depart { margin-top: 16px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; }
+  .bar-row .t { width: 38px; color: #6b7396; font-weight: 600; flex: none; font-variant-numeric: tabular-nums; }
+  .bar-row .track { flex: 1; height: 15px; background: rgba(26,35,64,.05); border-radius: 8px; overflow: hidden; }
+  .bar-row .fill {
+    height: 100%; border-radius: 8px; min-width: 3px;
+    background: linear-gradient(90deg, #ffd166, var(--sun), #ff5c3d);
+    transition: width .5s ease;
+  }
+  .bar-row .v { width: 48px; text-align: right; color: #8a90ab; font-size: 11px; flex: none; font-variant-numeric: tabular-nums; }
+  .bar-row.best .t { color: #059669; }
+  .bar-row.best .fill { background: linear-gradient(90deg, #34d399, #059669); }
+  .badge { font-size: 10px; font-weight: 800; border-radius: 5px; padding: 1px 5px; color: #fff; margin-left: 4px; }
+  .badge.rec { background: #059669; } .badge.avoid { background: var(--hot); }
+  #depSummary { font-size: 13px; margin: 8px 0 10px; line-height: 1.6; }
+  #depSummary .best-t { font-size: 17px; font-weight: 800; color: #059669; }
+
+  /* ---------- 범례 (좌하단) ---------- */
+  #legend {
+    position: fixed; left: 16px; bottom: 16px; z-index: 1000;
+    padding: 11px 15px; font-size: 12px; line-height: 1.9;
+  }
+  #legend .li { display: flex; align-items: center; gap: 8px; }
+  #legend .sw { width: 22px; height: 8px; border-radius: 4px; flex: none; }
+
+  /* ---------- 마커 ---------- */
+  .pin { position: relative; }
+  .pin .head {
+    width: 30px; height: 30px; border-radius: 50% 50% 50% 4px; transform: rotate(-45deg);
+    display: grid; place-items: center; box-shadow: 0 4px 10px rgba(26,35,64,.35);
+    border: 2.5px solid #fff;
+  }
+  .pin .head span { transform: rotate(45deg); color: #fff; font-size: 11px; font-weight: 800; }
+  .pin.start .head { background: #059669; }
+  .pin.end .head { background: var(--hot); }
+
+  /* ---------- 경로 애니메이션 ---------- */
+  .shade-path { stroke-dasharray: 13 11; animation: dashmove 1.1s linear infinite; }
+  @keyframes dashmove { to { stroke-dashoffset: -24; } }
+
+  /* ---------- 로딩/토스트 ---------- */
+  #toast {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 1200;
+    padding: 10px 20px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    background: rgba(26,35,64,.92); color: #fff; display: none;
+  }
+  #toast.err { background: rgba(190,40,40,.94); }
+  .spin {
+    width: 14px; height: 14px; border: 2.5px solid rgba(255,138,61,.3); border-top-color: var(--sun);
+    border-radius: 50%; animation: rot .7s linear infinite; display: inline-block;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  @media (max-width: 860px) {
+    #ctrl { width: calc(100vw - 32px); }
+    #panel { top: auto; right: 8px; left: 8px; bottom: 8px; width: auto; max-height: 46vh; }
+    #hint { top: auto; bottom: 50vh; }
+    #legend { display: none; }
+  }
 </style>
 </head>
 <body>
-<div id="topbar">
-  <b>그늘로</b>
-  <label>시간대 <select id="hour">
-    <option>10</option><option>13</option><option selected>14</option><option>15</option><option>17</option>
-  </select>시</label>
-  <label>그늘 선호도 β <input type="range" id="beta" min="0" max="3" step="0.5" value="2">
-    <span id="betaVal">2.0</span></label>
-  <button id="reset">초기화</button>
-</div>
-<div id="main">
-  <div id="map"></div>
-  <div id="panel">
-    <p id="hint">지도를 두 번 클릭해 출발·도착 지점을 정하세요.</p>
-    <div id="routes"></div>
-    <div id="departure"></div>
+<div id="map"></div>
+
+<!-- 좌상단 컨트롤 -->
+<div id="ctrl" class="card">
+  <div id="brand">
+    <div class="logo">⛱️</div>
+    <div><h1>그늘로</h1><small>노원구 · 태양을 피하는 길찾기</small></div>
+  </div>
+
+  <div class="sec-label">시간대 (8월 6일 기준)</div>
+  <div id="hours"></div>
+  <div id="playRow">
+    <button id="play">▶ 그림자 타임랩스</button>
+    <span id="sunmeta"></span>
+  </div>
+
+  <div class="sec-label">그늘 선호도 β</div>
+  <div id="betaRow">
+    <span style="font-size:11px;color:#8a90ab">최단</span>
+    <input type="range" id="beta" min="0" max="3" step="0.5" value="2">
+    <span style="font-size:11px;color:#8a90ab">그늘</span>
+    <span id="betaVal">2.0</span>
+  </div>
+  <div id="betaHint">β=2.0 → 그늘길이 최대 3배 길어도 감수</div>
+
+  <div id="btnRow">
+    <button class="tbtn on" id="tglShadow">🌑 그림자</button>
+    <button class="tbtn" id="tglGrid">🔳 그늘율 격자</button>
+    <button class="tbtn" id="btnReset">↺ 초기화</button>
   </div>
 </div>
+
+<!-- 안내 칩 -->
+<div id="hint" class="card"><span class="dot"></span><span id="hintText">지도를 클릭해 출발지를 정하세요</span></div>
+
+<!-- 우측 결과 패널 -->
+<div id="panel" class="card">
+  <h2>🧭 경로 비교 <span class="chip" id="metaChip"></span></h2>
+  <div class="route-grid">
+    <div class="rcard short">
+      <div class="name">🔥 최단 경로</div>
+      <div class="big" id="sTime">–</div>
+      <div class="sub" id="sSub">–</div>
+      <div class="shadebar"><i id="sBar"></i></div>
+      <div class="sub" id="sShade" style="margin-top:3px">–</div>
+    </div>
+    <div class="rcard shade">
+      <div class="name">⛱️ 그늘 경로</div>
+      <div class="big" id="hTime">–</div>
+      <div class="sub" id="hSub">–</div>
+      <div class="shadebar"><i id="hBar"></i></div>
+      <div class="sub" id="hShade" style="margin-top:3px">–</div>
+    </div>
+  </div>
+  <div id="verdict"></div>
+
+  <div id="depart">
+    <h2>🕑 언제 출발할까?</h2>
+    <div id="depSummary"><span class="spin"></span> 계산 중…</div>
+    <div id="depChart"></div>
+  </div>
+</div>
+
+<!-- 범례 -->
+<div id="legend" class="card">
+  <div class="li"><span class="sw" style="background:rgba(47,62,124,.55)"></span>건물·가로수 그림자</div>
+  <div class="li"><span class="sw" style="background:linear-gradient(90deg,#f97316,#ef4444)"></span>최단 경로 (땡볕 감수)</div>
+  <div class="li"><span class="sw" style="background:linear-gradient(90deg,#3b82f6,#1d4ed8)"></span>그늘 경로 (추천)</div>
+</div>
+
+<div id="toast"></div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const map = L.map('map').setView([37.6195, 127.0596], 15);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-  { attribution: '&copy; OpenStreetMap' }).addTo(map);
+'use strict';
+/* ==================== 상태 ==================== */
+const HOURS = [10, 13, 14, 15, 17];
+const SUN_ICON = { 10: '🌤️', 13: '☀️', 14: '☀️', 15: '🌞', 17: '🌇' };
+const SUN_DESC = { 10: '해가 동남쪽, 그림자 김', 13: '해가 가장 높음', 14: '한낮 · 자외선 최고',
+                   15: '오후 볕 강함', 17: '해가 서쪽, 그림자 김' };
+let state = { hour: 14, beta: 2.0, clicks: [], showShadow: true, showGrid: false, playing: null };
+let layers = { shadow: null, grid: null, routes: [], markers: [] };
+const $ = id => document.getElementById(id);
 
-const hourSel = document.getElementById('hour'), betaInp = document.getElementById('beta');
-const routesDiv = document.getElementById('routes'), depDiv = document.getElementById('departure');
-let shadeLayer = null, markers = [], lines = [], clicks = [];
+/* ==================== 지도 ==================== */
+const map = L.map('map', { zoomControl: false }).setView([37.6195, 127.0596], 15);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
+}).addTo(map);
 
-function showError(msg) { routesDiv.innerHTML = '<p class="err">' + msg + '</p>'; }
+/* ==================== 유틸 ==================== */
+function toast(msg, isErr = false, ms = 2600) {
+  const t = $('toast');
+  t.textContent = msg; t.className = isErr ? 'err' : ''; t.style.display = 'block';
+  clearTimeout(t._tm); t._tm = setTimeout(() => t.style.display = 'none', ms);
+}
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    let detail = '요청 실패 (' + res.status + ')';
+    try { detail = (await res.json()).detail || detail; } catch (e) { /* 무시 */ }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+const fmtMin = m => m >= 60 ? `${Math.floor(m / 60)}시간 ${Math.round(m % 60)}분` : `${m.toFixed(1)}분`;
+const fmtDist = d => d >= 1000 ? (d / 1000).toFixed(2) + 'km' : d + 'm';
 
-async function loadShade() {
+/* ==================== 레이어: 그림자 ==================== */
+const shadeCache = {};
+async function loadShadow() {
+  if (!state.showShadow) { if (layers.shadow) map.removeLayer(layers.shadow); layers.shadow = null; return; }
   try {
-    const res = await fetch('/api/shade?hour=' + hourSel.value);
-    if (!res.ok) throw new Error();
-    const gj = await res.json();
-    if (shadeLayer) map.removeLayer(shadeLayer);
-    shadeLayer = L.geoJSON(gj, { style: { color: '#12275b', weight: 0, fillColor: '#12275b', fillOpacity: 0.35 } }).addTo(map);
-  } catch (e) { showError('그늘 데이터를 불러오지 못했습니다.'); }
+    if (!shadeCache[state.hour]) shadeCache[state.hour] = await getJSON('/api/shade?hour=' + state.hour);
+    if (layers.shadow) map.removeLayer(layers.shadow);
+    layers.shadow = L.geoJSON(shadeCache[state.hour], {
+      style: { color: '#2f3e7c', weight: 0, fillColor: '#2f3e7c', fillOpacity: 0.4 },
+      interactive: false,
+    }).addTo(map);
+    if (layers.shadow.bringToBack) layers.shadow.bringToBack();
+  } catch (e) { toast('그림자 데이터를 불러오지 못했습니다: ' + e.message, true); }
+}
+
+/* ==================== 레이어: 그늘율 격자 ==================== */
+const gridCache = {};
+function gridColor(r) { // 볕(투명한 주황) → 그늘(짙은 남색)
+  if (r < 0.15) return { fill: '#ff8a3d', op: 0.10 };
+  if (r < 0.35) return { fill: '#8d7bb8', op: 0.22 };
+  if (r < 0.60) return { fill: '#4c5aa8', op: 0.34 };
+  return { fill: '#1e2b58', op: 0.48 };
+}
+async function loadGrid() {
+  if (layers.grid) { map.removeLayer(layers.grid); layers.grid = null; }
+  if (!state.showGrid) return;
+  try {
+    if (!gridCache[state.hour]) gridCache[state.hour] = await getJSON('/api/grid?hour=' + state.hour);
+    const key = 'shade_' + state.hour;
+    layers.grid = L.geoJSON(gridCache[state.hour], {
+      style: f => {
+        const c = gridColor(f.properties[key] || 0);
+        return { weight: 0, fillColor: c.fill, fillOpacity: c.op };
+      },
+      onEachFeature: (f, ly) => ly.bindTooltip(
+        `그늘율 ${Math.round((f.properties[key] || 0) * 100)}%`, { sticky: true, direction: 'top' }),
+    }).addTo(map);
+  } catch (e) { toast('격자 데이터를 불러오지 못했습니다: ' + e.message, true); }
+}
+
+/* ==================== 마커 ==================== */
+function makePin(kind, label) {
+  return L.divIcon({
+    className: '', iconSize: [30, 30], iconAnchor: [15, 28],
+    html: `<div class="pin ${kind}"><div class="head"><span>${label}</span></div></div>`,
+  });
+}
+function addMarker(latlng, kind) {
+  const mk = L.marker(latlng, { icon: makePin(kind, kind === 'start' ? '출' : '도') }).addTo(map);
+  layers.markers.push(mk);
+}
+
+/* ==================== 경로 ==================== */
+function clearRoutes() { layers.routes.forEach(l => map.removeLayer(l)); layers.routes = []; }
+function drawRoutes(data) {
+  clearRoutes();
+  // 최단(주황-빨강): 아래 깔림
+  layers.routes.push(L.polyline(data.shortest.coords,
+    { color: '#ef4444', weight: 4, opacity: 0.75, dashArray: '2 7', lineCap: 'round' }).addTo(map));
+  // 그늘(파랑): 흰 케이싱 + 애니메이션 대시
+  layers.routes.push(L.polyline(data.shade.coords,
+    { color: '#ffffff', weight: 10, opacity: 0.9, lineCap: 'round' }).addTo(map));
+  layers.routes.push(L.polyline(data.shade.coords,
+    { color: '#2563eb', weight: 6, opacity: 0.95, lineCap: 'round', className: 'shade-path' }).addTo(map));
+  const all = data.shortest.coords.concat(data.shade.coords);
+  map.fitBounds(L.latLngBounds(all), { paddingTopLeft: [360, 40], paddingBottomRight: [370, 40] });
+}
+
+function renderCompare(d) {
+  $('panel').classList.add('show');
+  $('metaChip').textContent = `${d.hour}시 · β=${d.beta.toFixed(1)}`;
+  $('sTime').textContent = fmtMin(d.shortest.time_min);
+  $('hTime').textContent = fmtMin(d.shade.time_min);
+  $('sSub').textContent = fmtDist(d.shortest.dist_m);
+  $('hSub').textContent = fmtDist(d.shade.dist_m);
+  $('sBar').style.width = d.shortest.shade_pct + '%';
+  $('hBar').style.width = d.shade.shade_pct + '%';
+  $('sShade').textContent = `그늘 ${d.shortest.shade_pct}%`;
+  $('hShade').textContent = `그늘 ${d.shade.shade_pct}%`;
+
+  const dShade = d.shade.shade_pct - d.shortest.shade_pct;
+  const dTime = d.shade.time_min - d.shortest.time_min;
+  let msg;
+  if (dShade <= 2) msg = '두 경로의 그늘이 비슷해요. <b>최단 경로</b>로 가도 됩니다.';
+  else if (dTime <= 0.5) msg = `시간 손해 거의 없이 그늘을 <b>+${dShade}%p</b> 더 누릴 수 있어요. 무조건 <b>그늘 경로</b>!`;
+  else msg = `<b>${fmtMin(Math.abs(dTime))}</b>만 더 걸으면 그늘이 <b>+${dShade}%p</b> 늘어나요.`;
+  $('verdict').innerHTML = '💡 ' + msg;
 }
 
 async function requestRoute() {
-  const [s, t] = clicks;
+  const [s, t] = state.clicks;
   const qs = `start_lat=${s.lat}&start_lon=${s.lng}&end_lat=${t.lat}&end_lon=${t.lng}`;
+  $('hintText').innerHTML = '<span class="spin"></span> 경로 계산 중…';
   try {
-    const res = await fetch(`/api/route?${qs}&hour=${hourSel.value}&beta=${betaInp.value}`);
-    if (!res.ok) throw new Error((await res.json()).detail);
-    const data = await res.json();
-    lines.forEach(l => map.removeLayer(l)); lines = [];
-    lines.push(L.polyline(data.shortest.coords, { color: '#e03131', weight: 3 }).addTo(map));
-    lines.push(L.polyline(data.shade.coords, { color: '#1971c2', weight: 6, opacity: 0.85 }).addTo(map));
-    routesDiv.innerHTML =
-      '<table><tr><th></th><th style="color:#e03131">최단</th><th style="color:#1971c2">그늘</th></tr>' +
-      `<tr><td>거리</td><td>${data.shortest.dist_m}m</td><td>${data.shade.dist_m}m</td></tr>` +
-      `<tr><td>시간</td><td>${data.shortest.time_min}분</td><td>${data.shade.time_min}분</td></tr>` +
-      `<tr><td>그늘</td><td>${data.shortest.shade_pct}%</td><td>${data.shade.shade_pct}%</td></tr></table>`;
+    const d = await getJSON(`/api/route?${qs}&hour=${state.hour}&beta=${state.beta}`);
+    drawRoutes(d); renderCompare(d);
+    $('hint').style.opacity = 0;
     loadDeparture(qs);
-  } catch (e) { showError(e.message || '경로 계산에 실패했습니다.'); }
+  } catch (e) {
+    toast(e.message || '경로 계산에 실패했습니다.', true);
+    resetAll();
+  }
 }
 
+/* ==================== 출발 시각 추천 ==================== */
 async function loadDeparture(qs) {
+  $('depSummary').innerHTML = '<span class="spin"></span> 시간대별 햇빛 노출 계산 중…';
+  $('depChart').innerHTML = '';
   try {
-    const res = await fetch('/api/departure?' + qs);
-    if (!res.ok) throw new Error();
-    const d = await res.json();
-    const maxE = Math.max(...d.curve.map(c => c.exposure_m), 1);
-    let html = `<p><b>추천 출발 ${d.best.t}</b> (노출 ${d.best.exposure_m}m)<br>` +
-      `피해야 할 시각 ${d.worst.t} (노출 ${d.worst.exposure_m}m)</p>`;
-    for (const c of d.curve) {
-      if (!c.t.endsWith(':00') && !c.t.endsWith(':30')) continue;  // 30분 간격만 표시
-      html += `<div class="barrow"><span style="width:42px">${c.t}</span>` +
-        `<div class="bar" style="width:${Math.round(c.exposure_m / maxE * 170)}px"></div>` +
-        `<span>${c.exposure_m}</span></div>`;
+    const d = await getJSON('/api/departure?' + qs);
+    $('depSummary').innerHTML =
+      `지금 이 경로라면 <span class="best-t">${d.best.t}</span> 출발이 최선 ` +
+      `(햇빛 노출 <b>${d.best.exposure_m}m</b>)<br>` +
+      `<span style="color:#b23">☀️ ${d.worst.t}</span>는 노출 ${d.worst.exposure_m}m로 최악이에요.`;
+    const shown = d.curve.filter(c => c.t.endsWith(':00') || c.t.endsWith(':30'));
+    const maxE = Math.max(...shown.map(c => c.exposure_m), 1);
+    const minShown = Math.min(...shown.map(c => c.exposure_m));
+    let bestMarked = false, worstMarked = false;
+    let html = '';
+    for (const c of shown) {
+      const isBest = !bestMarked && c.exposure_m === minShown && (bestMarked = true);
+      const isWorst = !worstMarked && c.exposure_m === maxE && (worstMarked = true);
+      html += `<div class="bar-row${isBest ? ' best' : ''}">` +
+        `<span class="t">${c.t}</span>` +
+        `<div class="track"><div class="fill" style="width:${Math.round(c.exposure_m / maxE * 100)}%"></div></div>` +
+        `<span class="v">${c.exposure_m}m</span>` +
+        (isBest ? '<span class="badge rec">추천</span>' : isWorst ? '<span class="badge avoid">피하기</span>' : '') +
+        `</div>`;
     }
-    depDiv.innerHTML = html;
-  } catch (e) { depDiv.innerHTML = '<p class="err">출발시각 추천을 불러오지 못했습니다.</p>'; }
+    $('depChart').innerHTML = html;
+  } catch (e) { $('depSummary').innerHTML = '⚠️ 출발시각 추천 실패: ' + e.message; }
 }
 
+/* ==================== 인터랙션 ==================== */
 function resetAll() {
-  clicks = [];
-  markers.forEach(m => map.removeLayer(m)); markers = [];
-  lines.forEach(l => map.removeLayer(l)); lines = [];
-  routesDiv.innerHTML = ''; depDiv.innerHTML = '';
+  state.clicks = [];
+  layers.markers.forEach(m => map.removeLayer(m)); layers.markers = [];
+  clearRoutes();
+  $('panel').classList.remove('show');
+  $('hint').style.opacity = 1;
+  $('hintText').textContent = '지도를 클릭해 출발지를 정하세요';
 }
 
 map.on('click', e => {
-  if (clicks.length >= 2) resetAll();          // 3회째 클릭이면 초기화
-  clicks.push(e.latlng);
-  markers.push(L.marker(e.latlng).addTo(map));
-  if (clicks.length === 2) requestRoute();
+  if (state.clicks.length >= 2) resetAll();
+  state.clicks.push(e.latlng);
+  addMarker(e.latlng, state.clicks.length === 1 ? 'start' : 'end');
+  if (state.clicks.length === 1) $('hintText').textContent = '도착지를 클릭하세요';
+  else requestRoute();
 });
 
-hourSel.onchange = () => { loadShade(); if (clicks.length === 2) requestRoute(); };
-betaInp.oninput = () => { document.getElementById('betaVal').textContent = (+betaInp.value).toFixed(1); };
-betaInp.onchange = () => { if (clicks.length === 2) requestRoute(); };
-document.getElementById('reset').onclick = resetAll;
+/* 시간대 세그먼트 */
+function setHour(h, fromPlay = false) {
+  state.hour = h;
+  document.querySelectorAll('#hours button').forEach(b => b.classList.toggle('on', +b.dataset.h === h));
+  $('sunmeta').textContent = SUN_DESC[h];
+  loadShadow(); loadGrid();
+  if (!fromPlay && state.clicks.length === 2) requestRoute();
+}
+HOURS.forEach(h => {
+  const b = document.createElement('button');
+  b.dataset.h = h;
+  b.innerHTML = `<span class="sun-ico">${SUN_ICON[h]}</span>${h}시`;
+  b.onclick = () => { stopPlay(); setHour(h); };
+  $('hours').appendChild(b);
+});
 
-loadShade();
+/* 타임랩스 */
+function stopPlay() {
+  if (state.playing) { clearInterval(state.playing); state.playing = null; }
+  $('play').classList.remove('playing'); $('play').textContent = '▶ 그림자 타임랩스';
+}
+$('play').onclick = () => {
+  if (state.playing) { stopPlay(); return; }
+  $('play').classList.add('playing'); $('play').textContent = '⏸ 정지';
+  let i = HOURS.indexOf(state.hour);
+  state.playing = setInterval(() => { i = (i + 1) % HOURS.length; setHour(HOURS[i], true); }, 1400);
+};
+
+/* β 슬라이더 */
+$('beta').oninput = () => {
+  state.beta = +$('beta').value;
+  $('betaVal').textContent = state.beta.toFixed(1);
+  $('betaHint').textContent = state.beta === 0
+    ? 'β=0 → 그늘 무시, 항상 최단 경로'
+    : `β=${state.beta.toFixed(1)} → 그늘길이 최대 ${(1 + state.beta).toFixed(1)}배 길어도 감수`;
+};
+$('beta').onchange = () => { if (state.clicks.length === 2) requestRoute(); };
+
+/* 토글/초기화 */
+$('tglShadow').onclick = () => {
+  state.showShadow = !state.showShadow;
+  $('tglShadow').classList.toggle('on', state.showShadow);
+  loadShadow();
+};
+$('tglGrid').onclick = () => {
+  state.showGrid = !state.showGrid;
+  $('tglGrid').classList.toggle('on', state.showGrid);
+  loadGrid();
+};
+$('btnReset').onclick = resetAll;
+
+/* ==================== 시작 ==================== */
+setHour(14);
+
+/* 공유 링크: ?from=lat,lon&to=lat,lon 이면 자동으로 경로 표시 */
+(function autoRouteFromURL() {
+  const qp = new URLSearchParams(location.search);
+  const parse = s => { const [a, b] = (s || '').split(',').map(Number); return isFinite(a) && isFinite(b) ? L.latLng(a, b) : null; };
+  const from = parse(qp.get('from')), to = parse(qp.get('to'));
+  if (!from || !to) return;
+  state.clicks = [from, to];
+  addMarker(from, 'start'); addMarker(to, 'end');
+  requestRoute();
+})();
 </script>
 </body>
 </html>
