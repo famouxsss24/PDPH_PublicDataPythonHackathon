@@ -50,7 +50,8 @@ def effective_heights(buildings: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         df.loc[height > 0, "height_eff"] = height[height > 0]
     if floors is not None:
         no_height = df["height_eff"] <= 0
-        df.loc[no_height & (floors > 0), "height_eff"] = floors[floors > 0] * FLOOR_HEIGHT_M
+        floor_mask = no_height & (floors > 0)
+        df.loc[floor_mask, "height_eff"] = (floors.loc[floor_mask] * FLOOR_HEIGHT_M).to_numpy()
     excluded = int((df["height_eff"] <= 0).sum())
     if excluded:
         print(f"[shadowcast] 높이 정보 없음으로 제외된 건물: {excluded}동 / 전체 {len(df)}동")

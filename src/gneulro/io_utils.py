@@ -37,8 +37,27 @@ def _resolve_data_path(path: str | Path) -> Path:
 # GIS건물통합정보(AL_D010) 실측 확인: 높이=A16(m, 다수 결측), 지상층수=A26. A15는 면적이라 층수 아님.
 HEIGHT_CANDIDATES = ["height", "HEIGHT", "A16", "BULD_HG", "높이"]
 FLOOR_CANDIDATES = ["GRND_FLR", "grnd_flr", "GROUND_FLO", "A26", "지상층수", "층수"]
-LAT_CANDIDATES = ["위도", "lat", "LAT", "latitude", "Y좌표"]
-LON_CANDIDATES = ["경도", "lon", "lng", "LON", "longitude", "X좌표"]
+LAT_CANDIDATES = [
+    "위도",
+    "lat",
+    "LAT",
+    "latitude",
+    "Y좌표",
+    "좌표(위도)",
+    "위치_y",
+    "y",
+]
+LON_CANDIDATES = [
+    "경도",
+    "lon",
+    "lng",
+    "LON",
+    "longitude",
+    "X좌표",
+    "좌표(경도)",
+    "위치_x",
+    "x",
+]
 
 
 def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
