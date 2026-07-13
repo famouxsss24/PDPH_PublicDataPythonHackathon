@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+from sqlalchemy.exc import OperationalError
 
 from gneulro.config import CRS_WGS, DATA_PROCESSED
 
@@ -28,24 +29,45 @@ class Store:
         """환경변수(USE_POSTGIS, POSTGRES_URL)를 읽어 백엔드를 결정한다."""
         _load_env()
         self.use_postgis = os.getenv("USE_POSTGIS", "false").lower() == "true"
+        self.engine = None
         if self.use_postgis:
             from sqlalchemy import create_engine
 
-            self.engine = create_engine(os.environ["POSTGRES_URL"])
+            try:
+                self.engine = create_engine(os.environ["POSTGRES_URL"])
+            except OperationalError:
+                self._fallback_to_parquet("초기화")
+
+    def _fallback_to_parquet(self, stage: str) -> None:
+        """PostGIS 연결 실패 시 parquet 백엔드로 전환한다."""
+        print(f"[store] PostGIS {stage} 실패 — parquet 모드로 fallback합니다.")
+        self.use_postgis = False
+        self.engine = None
 
     def save_layer(self, gdf: gpd.GeoDataFrame, name: str) -> None:
         """레이어를 PostGIS 테이블 또는 processed/{name}.parquet로 저장한다."""
         if self.use_postgis:
-            gdf.to_postgis(name, self.engine, if_exists="replace", index=False)
-        else:
-            DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
+            try:
+                gdf.to_postgis(name, self.engine, if_exists="replace", index=False)
+            except OperationalError:
+                self._fallback_to_parquet("저장")
+        DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
+        if not self.use_postgis:
             gdf.to_parquet(DATA_PROCESSED / f"{name}.parquet")
 
     def load_layer(self, name: str) -> gpd.GeoDataFrame:
         """저장된 레이어를 GeoDataFrame으로 읽는다."""
         if self.use_postgis:
-            return gpd.read_postgis(f'SELECT * FROM "{name}"', self.engine, geom_col="geometry")
-        return gpd.read_parquet(DATA_PROCESSED / f"{name}.parquet")
+            try:
+                return gpd.read_postgis(f'SELECT * FROM "{name}"', self.engine, geom_col="geometry")
+            except OperationalError:
+                self._fallback_to_parquet("읽기")
+        parquet_path = DATA_PROCESSED / f"{name}.parquet"
+        if parquet_path.exists():
+            return gpd.read_parquet(parquet_path)
+        raise FileNotFoundError(
+            f"{parquet_path}가 없습니다. 먼저 data/raw에 공공데이터를 넣고 pipeline/01_prepare.py를 실행하세요."
+        )
 
     def layer_geojson(self, name: str, simplify_m: float = 2.0) -> dict:
         """레이어를 4326 변환·단순화 후 GeoJSON FeatureCollection dict로 반환한다 (API용)."""
