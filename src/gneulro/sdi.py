@@ -45,21 +45,40 @@ def _load_shelters(path) -> gpd.GeoDataFrame | None:
 
 
 def _estimate_pop_vuln(population: pd.DataFrame | None, shelters: gpd.GeoDataFrame | None) -> float:
-    """인구/쉼터 데이터가 없으면 기본 취약도 1.0을 사용한다."""
+    """child_pop와 elder_pop를 서로 다른 가중치로 반영한 취약도 지수를 계산한다."""
     if population is None:
         return 1.0
 
-    numeric_cols = [
-        col
-        for col in population.columns
-        if col not in {"id", "cell_id", "행정동", "동", "읍면동", "구분", "name", "지역"}
-        and pd.api.types.is_numeric_dtype(population[col])
-    ]
-    if not numeric_cols:
-        return 1.0
+    child_col = next((col for col in ["child_pop", "child", "어린이", "0~9세"] if col in population.columns), None)
+    elder_col = next((col for col in ["elder_pop", "elder", "노인", "65세이상"] if col in population.columns), None)
 
-    vuln = population[numeric_cols].sum(axis=1).fillna(0.0)
-    return float(vuln.max() / max(vuln.sum(), 1.0)) if not vuln.empty else 1.0
+    if child_col is None and elder_col is None:
+        numeric_cols = [
+            col
+            for col in population.columns
+            if col not in {"id", "cell_id", "행정동", "동", "읍면동", "구분", "name", "지역"}
+            and pd.api.types.is_numeric_dtype(population[col])
+        ]
+        if not numeric_cols:
+            return 1.0
+        vuln = population[numeric_cols].sum(axis=1).fillna(0.0)
+        return float(vuln.max() / max(vuln.sum(), 1.0)) if not vuln.empty else 1.0
+
+    def _numeric_series(col: str) -> pd.Series:
+        series = population[col]
+        if not pd.api.types.is_numeric_dtype(series):
+            series = pd.to_numeric(series, errors="coerce")
+        return series.fillna(0.0)
+
+    child_score = _numeric_series(child_col) if child_col else pd.Series(0.0, index=population.index)
+    elder_score = _numeric_series(elder_col) if elder_col else pd.Series(0.0, index=population.index)
+    weighted = 1.0 * child_score + 1.5 * elder_score
+    base = child_score + elder_score
+    weighted = weighted.fillna(0.0)
+    base = base.fillna(0.0)
+    if base.sum() <= 0:
+        return 1.0
+    return float(weighted.sum() / max(base.sum(), 1.0))
 
 
 def compute_sdi(
