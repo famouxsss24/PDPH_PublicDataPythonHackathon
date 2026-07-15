@@ -9,7 +9,11 @@ const NOWON_BOUNDS = {
   west: 127.015,
   east: 127.13,
 };
-const EMPTY_COLLECTION = { type: "FeatureCollection", features: [] };
+const TURN_MARKER_ICONS = {
+  "좌회전": "corner-up-left",
+  "우회전": "corner-up-right",
+  "유턴": "undo-2",
+};
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 const LOW_POWER = window.matchMedia("(max-width: 700px)").matches
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
@@ -31,6 +35,9 @@ let currentNavigationPoint = null;
 let currentNavigationBearing = null;
 let navigationMarker = null;
 let navigationMarkerElement = null;
+let navigationTurnMarker = null;
+let navigationTurnElement = null;
+let navigationTurnKey = "";
 let navigationPlaceMarkers = [];
 let navigationActive = false;
 let followSuspendedUntil = 0;
@@ -459,14 +466,30 @@ function addCoreLayers() {
 function createNavigationMarker() {
   navigationMarkerElement = document.createElement("div");
   navigationMarkerElement.className = "navigation-marker";
+  navigationMarkerElement.setAttribute("aria-hidden", "true");
   navigationMarkerElement.hidden = true;
   navigationMarkerElement.innerHTML = `
-    <span class="navigation-arrow"><i data-lucide="arrow-up"></i></span>
+    <svg class="navigation-heading-cone" viewBox="0 0 64 72" aria-hidden="true">
+      <path d="M32 65 L7 18 Q32 -2 57 18 Z"></path>
+    </svg>
     <span class="navigation-dot"></span>`;
-  refreshIcons(navigationMarkerElement);
   navigationMarker = new window.maplibregl.Marker({
     element: navigationMarkerElement,
     anchor: "bottom",
+    offset: [0, 6],
+    rotationAlignment: "viewport",
+    pitchAlignment: "viewport",
+  });
+}
+
+function createNavigationTurnMarker() {
+  navigationTurnElement = document.createElement("div");
+  navigationTurnElement.className = "navigation-turn-marker";
+  navigationTurnElement.setAttribute("aria-hidden", "true");
+  navigationTurnElement.hidden = true;
+  navigationTurnMarker = new window.maplibregl.Marker({
+    element: navigationTurnElement,
+    anchor: "center",
     rotationAlignment: "viewport",
     pitchAlignment: "viewport",
   });
@@ -784,6 +807,7 @@ export function initMap(options = {}) {
     applyMapTheme(map, mapTheme);
     addCoreLayers();
     createNavigationMarker();
+    createNavigationTurnMarker();
     addBuildings({ force: true });
     if (lastState) {
       renderEndpoints(lastState);
@@ -920,6 +944,9 @@ export function setNavigationMode(active) {
     currentNavigationBearing = null;
     navigationMarker?.remove();
     if (navigationMarkerElement) navigationMarkerElement.hidden = true;
+    navigationTurnMarker?.remove();
+    if (navigationTurnElement) navigationTurnElement.hidden = true;
+    navigationTurnKey = "";
     clearNavigationPlaces();
   }
   const camera = navigationCamera();
@@ -957,6 +984,27 @@ export function setNavigationPoint(point, bearing = null, follow = false) {
   if (follow && Date.now() >= followSuspendedUntil) {
     followNavigationCamera(point, bearing);
   }
+}
+
+export function setNavigationTurn(maneuver = null) {
+  if (!ready || !navigationTurnMarker || !navigationTurnElement) return;
+  if (!maneuver?.point || !TURN_MARKER_ICONS[maneuver.turn]) {
+    navigationTurnMarker.remove();
+    navigationTurnElement.hidden = true;
+    navigationTurnKey = "";
+    return;
+  }
+  const key = `${maneuver.turn}:${maneuver.point.lat.toFixed(6)}:${maneuver.point.lon.toFixed(6)}`;
+  if (key !== navigationTurnKey) {
+    navigationTurnElement.innerHTML = `<i data-lucide="${TURN_MARKER_ICONS[maneuver.turn]}"></i>`;
+    refreshIcons(navigationTurnElement);
+    navigationTurnKey = key;
+  }
+  navigationTurnElement.hidden = false;
+  navigationTurnElement.classList.toggle("is-near", Number(maneuver.distance) <= 35);
+  navigationTurnMarker
+    .setLngLat([maneuver.point.lon, maneuver.point.lat])
+    .addTo(map);
 }
 
 export function setNavigationPlaces(places = []) {

@@ -16,6 +16,7 @@ const ICONS = {
   navigation: '<polygon points="3 11 22 2 13 21 11 13 3 11"/>',
   "arrow-left": '<path d="m15 18-6-6 6-6M9 12h12"/>',
   "volume-2": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8 8 0 0 1 0 12"/>',
+  "volume-x": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="m22 9-6 6M16 9l6 6"/>',
   play: '<polygon points="6 3 20 12 6 21 6 3"/>',
   pause: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>',
   "train-front": '<rect x="4" y="3" width="16" height="16" rx="3"/><path d="M8 19l-2 3M16 19l2 3M8 8h8M8 14h.01M16 14h.01"/>',

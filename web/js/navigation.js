@@ -3,16 +3,19 @@ import {
   setNavigationMode,
   setNavigationPlaces,
   setNavigationPoint,
+  setNavigationTurn,
 } from "./map.js";
 import { fetchNearbyPlaces } from "./api.js";
 import { getState, subscribe } from "./state.js";
 import { refreshIcons } from "./icons.js";
+import { resetNavigationGuidance, updateNavigationGuidance } from "./steps.js";
 
 const MOBILE_UI = window.matchMedia("(max-width: 700px)");
 const LOW_POWER = window.matchMedia("(max-width: 700px)").matches
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
   || (navigator.deviceMemory && navigator.deviceMemory <= 4);
 const FRAME_INTERVAL = LOW_POWER ? 40 : 30;
+const MAP_TURN_TYPES = new Set(["좌회전", "우회전", "유턴"]);
 const elements = {};
 let previewFrame = 0;
 let previewStarted = 0;
@@ -79,20 +82,42 @@ function buildTrack(route) {
   for (let index = 1; index < points.length; index += 1) {
     cumulative.push(cumulative.at(-1) + haversine(points[index - 1], points[index]));
   }
-  return { points, cumulative, total: cumulative.at(-1) || 1, route };
+  const track = { points, cumulative, total: cumulative.at(-1) || 1, route, maneuvers: [] };
+  const steps = route?.steps ?? [];
+  const declaredDistance = steps.reduce((sum, step) => sum + Math.max(0, Number(step.dist_m) || 0), 0);
+  const distanceScale = declaredDistance > 0 ? track.total / declaredDistance : 1;
+  let traveled = 0;
+  steps.forEach((step, index) => {
+    if (index > 0) {
+      const routeDistance = Math.min(track.total, traveled * distanceScale);
+      const position = pointOnTrack(track, routeDistance);
+      if (position) {
+        track.maneuvers.push({
+          key: `${index}:${step.turn}:${step.name}`,
+          routeDistance,
+          point: position.point,
+          step,
+        });
+      }
+    }
+    traveled += Math.max(0, Number(step.dist_m) || 0);
+  });
+  return track;
 }
 
-function pointAt(progress) {
-  if (!routeTrack?.points.length) return null;
-  const target = routeTrack.total * Math.max(0, Math.min(1, progress));
-  let index = routeTrack.cumulative.findIndex((distance) => distance >= target);
+function pointOnTrack(track, targetDistance) {
+  if (!track?.points.length) return null;
+  if (track.points.length === 1) return { point: track.points[0], bearing: 0 };
+  const target = Math.max(0, Math.min(track.total, targetDistance));
+  let index = track.cumulative.findIndex((distance) => distance >= target);
+  if (index < 0) index = track.points.length - 1;
   if (index <= 0) index = 1;
-  if (index >= routeTrack.points.length) index = routeTrack.points.length - 1;
-  const previousDistance = routeTrack.cumulative[index - 1];
-  const nextDistance = routeTrack.cumulative[index];
+  if (index >= track.points.length) index = track.points.length - 1;
+  const previousDistance = track.cumulative[index - 1];
+  const nextDistance = track.cumulative[index];
   const ratio = (target - previousDistance) / Math.max(1, nextDistance - previousDistance);
-  const previous = routeTrack.points[index - 1];
-  const next = routeTrack.points[index];
+  const previous = track.points[index - 1];
+  const next = track.points[index];
   return {
     point: {
       lat: previous.lat + (next.lat - previous.lat) * ratio,
@@ -100,6 +125,11 @@ function pointAt(progress) {
     },
     bearing: bearing(previous, next),
   };
+}
+
+function pointAt(progress) {
+  if (!routeTrack) return null;
+  return pointOnTrack(routeTrack, routeTrack.total * Math.max(0, Math.min(1, progress)));
 }
 
 function formatDistance(meters) {
@@ -114,6 +144,30 @@ function updateProgress(progress) {
   const remainingMinutes = Math.max(0, Math.ceil(Number(route.minutes) * (1 - progress)));
   elements.progress.textContent = `남은 ${formatDistance(remainingDistance)} · ${remainingMinutes}분`;
   elements.bar.style.width = `${Math.round(progress * 1000) / 10}%`;
+  updateManeuver(progress);
+}
+
+function updateManeuver(progress) {
+  if (!routeTrack) return;
+  const traveled = routeTrack.total * Math.max(0, Math.min(1, progress));
+  const next = routeTrack.maneuvers.find((maneuver) => maneuver.routeDistance > traveled + 2);
+  if (!next) {
+    updateNavigationGuidance({
+      key: "destination",
+      step: { turn: "도착", name: elements.destination.textContent || "목적지" },
+      distance: Math.max(0, routeTrack.total - traveled),
+    });
+    setNavigationTurn(null);
+    return;
+  }
+  const distance = Math.max(0, next.routeDistance - traveled);
+  updateNavigationGuidance({ key: next.key, step: next.step, distance });
+  const shouldShowTurn = MAP_TURN_TYPES.has(next.step.turn) && distance <= 320;
+  setNavigationTurn(shouldShowTurn ? {
+    point: next.point,
+    turn: next.step.turn,
+    distance,
+  } : null);
 }
 
 async function updateNearbyPlaces(point, { force = false } = {}) {
@@ -273,6 +327,8 @@ function stopNavigation() {
   lastNearbyAt = 0;
   nearbyToken += 1;
   setNavigationPlaces([]);
+  setNavigationTurn(null);
+  resetNavigationGuidance();
   if (geolocationWatch !== null) navigator.geolocation.clearWatch(geolocationWatch);
   geolocationWatch = null;
   delete document.body.dataset.navigationMode;

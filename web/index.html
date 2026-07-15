@@ -186,13 +186,14 @@
           <button id="recenterNavigation" class="icon-button on-dark" type="button" aria-label="현재 안내 위치로 이동" title="안내 위치로 이동">
             <i data-lucide="focus"></i>
           </button>
-          <button id="voiceToggle" class="icon-button on-dark" type="button" aria-label="음성 안내 켜기" aria-pressed="false">
-            <i data-lucide="volume-2"></i>
+          <button id="voiceToggle" class="icon-button on-dark" type="button" aria-label="음성 안내 켜기" aria-pressed="false" title="음성 안내 켜기">
+            <i data-lucide="volume-x"></i>
           </button>
         </div>
       </div>
 
       <div id="nextTurn" class="next-turn"></div>
+      <p id="navigationAnnouncement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
 
       <div class="navigation-bottom">
         <div class="navigation-destination">
@@ -256,6 +257,6 @@
   </dialog>
 
   <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <script type="module" src="./js/app.js?v=20260715c"></script>
+  <script type="module" src="./js/app.js?v=20260716a"></script>
 </body>
 </html>

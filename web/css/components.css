@@ -716,6 +716,17 @@
   color: #fff;
 }
 
+.navigation-actions .icon-button.is-active {
+  background: rgba(104, 211, 171, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(126, 224, 173, 0.32);
+  color: #a5f0d1;
+}
+
+.navigation-actions .icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .next-turn .turn-icon,
 .step-item .turn-icon {
   display: grid;
@@ -1090,56 +1101,80 @@
 
 .navigation-marker {
   position: relative;
-  width: 40px;
-  height: 58px;
+  width: 58px;
+  height: 64px;
   pointer-events: none;
   transform-origin: 50% 100%;
 }
 
-.navigation-arrow,
+.navigation-heading-cone,
 .navigation-dot {
   position: absolute;
   left: 50%;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
   transform: translateX(-50%);
 }
 
-.navigation-arrow {
+.navigation-heading-cone {
   top: 0;
-  width: 36px;
-  height: 36px;
-  border: 3px solid #fff;
-  background: var(--route);
-  box-shadow: 0 5px 16px rgba(14, 42, 71, 0.35);
-  color: #fff;
+  width: 58px;
+  height: 64px;
+  overflow: visible;
+  filter: drop-shadow(0 4px 8px rgba(25, 86, 157, 0.12));
 }
 
-.navigation-arrow svg {
-  width: 19px;
-  height: 19px;
+.navigation-heading-cone path {
+  fill: rgba(36, 118, 219, 0.18);
+  stroke: rgba(36, 118, 219, 0.34);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.navigation-dot {
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--route);
+  box-shadow: 0 2px 8px rgba(14, 42, 71, 0.32);
+}
+
+.navigation-turn-marker {
+  position: absolute;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  place-items: center;
+  background: #2476db;
+  box-shadow: 0 5px 14px rgba(15, 60, 113, 0.3);
+  color: #fff;
+  pointer-events: none;
+}
+
+.navigation-turn-marker::after {
+  position: absolute;
+  inset: -7px;
+  border: 2px solid rgba(36, 118, 219, 0.2);
+  border-radius: 50%;
+  content: "";
+  opacity: 0;
+}
+
+.navigation-turn-marker.is-near::after {
+  animation: turn-marker-pulse 1.6s ease-out infinite;
+}
+
+.navigation-turn-marker svg {
+  width: 16px;
+  height: 16px;
   stroke-width: 2.8;
 }
 
-.navigation-dot {
-  bottom: -1px;
-  width: 14px;
-  height: 14px;
-  border: 3px solid #fff;
-  background: var(--route);
-  box-shadow: 0 3px 10px rgba(14, 42, 71, 0.34);
-}
-
-.navigation-marker::before {
-  position: absolute;
-  top: 32px;
-  bottom: 9px;
-  left: 50%;
-  width: 2px;
-  background: rgba(36, 118, 219, 0.7);
-  content: "";
-  transform: translateX(-50%);
+@keyframes turn-marker-pulse {
+  0% { opacity: 0.7; transform: scale(0.72); }
+  72%, 100% { opacity: 0; transform: scale(1.16); }
 }
 
 .nearby-place-label {
