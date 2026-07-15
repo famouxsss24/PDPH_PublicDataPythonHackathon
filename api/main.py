@@ -35,11 +35,14 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)  # 수 MB
 
 
 @app.middleware("http")
-async def disable_static_cache(request, call_next):
-    """개발·발표 중 프론트 수정이 일반 새로고침에도 즉시 반영되게 한다."""
+async def cache_policy(request, call_next):
+    """프론트는 재검증하고, 불변에 가까운 3D 장면 데이터는 짧게 재사용한다."""
     response = await call_next(request)
-    if not request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store"
+    scene_paths = ("/api/buildings", "/api/shade_frame", "/api/shade_frames", "/api/sun_positions")
+    if request.url.path.startswith(scene_paths):
+        response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+    elif not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 # ---- 시작 시 전역 1회 로드 (SPEC §7) ----
@@ -196,13 +199,22 @@ def _parse_bbox(bbox_text: str | None) -> tuple[float, float, float, float] | No
     return clipped
 
 
-def _viewport_geojson(name: str, bounds: tuple[float, float, float, float], simplify_m: float) -> dict:
-    key = f"{name}:{','.join(f'{value:.4f}' for value in bounds)}:{simplify_m}"
+def _viewport_geojson(
+    name: str,
+    bounds: tuple[float, float, float, float],
+    simplify_m: float,
+    property_filter: tuple[str, object] | None = None,
+) -> dict:
+    filter_key = f":{property_filter[0]}={property_filter[1]}" if property_filter else ""
+    key = f"{name}:{','.join(f'{value:.4f}' for value in bounds)}:{simplify_m}{filter_key}"
     if key in _static_cache:
         return _static_cache[key]
     if name not in _static_layers:
         _static_layers[name] = store.load_layer(name)
     layer = _static_layers[name]
+    if property_filter:
+        field, value = property_filter
+        layer = layer[layer[field] == value]
     clip_geometry = gpd.GeoSeries([box(*bounds)], crs=CRS_WGS).to_crs(layer.crs).iloc[0]
     subset = layer[layer.intersects(clip_geometry)].copy()
     subset.geometry = subset.geometry.intersection(clip_geometry)
@@ -244,10 +256,26 @@ def api_shade_frames(bbox: str | None = None, lod: str = "standard") -> dict:
 
 
 @app.get("/api/shade_frame")
-def api_shade_frame(hour: int = 14) -> dict:
+def api_shade_frame(hour: int = 14, bbox: str | None = None, lod: str = "standard") -> dict:
     """07~18시 애니메이션 중 한 프레임만 반환해 메인 지도의 전송량을 줄인다."""
     if hour < 7 or hour > 18:
         raise HTTPException(422, detail="그림자 탐험 시간은 7~18시여야 합니다.")
+    bounds = _parse_bbox(bbox)
+    if bounds:
+        try:
+            frame = _viewport_geojson(
+                "shadows_anim",
+                bounds,
+                4.5 if lod == "mobile" else 2.5,
+                property_filter=("hour", hour),
+            )
+        except Exception:
+            raise HTTPException(
+                503, detail="그림자 프레임이 아직 없습니다. pipeline/09_shadow_frames.py를 실행하세요."
+            ) from None
+        if not frame["features"]:
+            raise HTTPException(404, detail=f"{hour}시 그림자 프레임이 없습니다.")
+        return frame
     key = f"frame_{hour}"
     if key not in _static_cache:
         frames = api_shade_frames()

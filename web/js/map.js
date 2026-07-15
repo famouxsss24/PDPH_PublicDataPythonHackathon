@@ -35,6 +35,10 @@ let navigationPlaceMarkers = [];
 let navigationActive = false;
 let followSuspendedUntil = 0;
 let followResumeTimer = null;
+let navigationCameraFrame = 0;
+let navigationCameraTarget = null;
+let navigationCameraState = null;
+let navigationCameraUpdatedAt = 0;
 let mapTheme = "light";
 let buildingRefreshTimer = null;
 let lastBuildingView = null;
@@ -487,8 +491,95 @@ function navigationCamera() {
   };
 }
 
+function shortestBearingDelta(from, to) {
+  return ((((to - from) % 360) + 540) % 360) - 180;
+}
+
+function readNavigationCamera() {
+  const center = map.getCenter();
+  return {
+    lon: center.lng,
+    lat: center.lat,
+    zoom: map.getZoom(),
+    pitch: map.getPitch(),
+    bearing: map.getBearing(),
+  };
+}
+
+function stopNavigationCamera({ clearTarget = false } = {}) {
+  cancelAnimationFrame(navigationCameraFrame);
+  navigationCameraFrame = 0;
+  navigationCameraUpdatedAt = 0;
+  navigationCameraState = null;
+  if (clearTarget) navigationCameraTarget = null;
+}
+
+function animateNavigationCamera(now) {
+  if (!navigationActive || !navigationCameraTarget || Date.now() < followSuspendedUntil) {
+    navigationCameraFrame = 0;
+    return;
+  }
+  const elapsed = navigationCameraUpdatedAt ? Math.min(64, now - navigationCameraUpdatedAt) : 16;
+  navigationCameraUpdatedAt = now;
+  const state = navigationCameraState ?? readNavigationCamera();
+  const target = navigationCameraTarget;
+  const positionAlpha = 1 - Math.exp(-elapsed / (LOW_POWER ? 240 : 190));
+  const rotationAlpha = 1 - Math.exp(-elapsed / (LOW_POWER ? 340 : 280));
+  const next = {
+    lon: state.lon + (target.lon - state.lon) * positionAlpha,
+    lat: state.lat + (target.lat - state.lat) * positionAlpha,
+    zoom: state.zoom + (target.zoom - state.zoom) * positionAlpha,
+    pitch: state.pitch + (target.pitch - state.pitch) * positionAlpha,
+    bearing: state.bearing + shortestBearingDelta(state.bearing, target.bearing) * rotationAlpha,
+  };
+  navigationCameraState = next;
+  map.jumpTo({
+    center: [next.lon, next.lat],
+    zoom: next.zoom,
+    pitch: next.pitch,
+    bearing: next.bearing,
+  });
+  const settled =
+    Math.abs(target.lon - next.lon) < 0.0000003
+    && Math.abs(target.lat - next.lat) < 0.0000003
+    && Math.abs(target.zoom - next.zoom) < 0.002
+    && Math.abs(target.pitch - next.pitch) < 0.03
+    && Math.abs(shortestBearingDelta(next.bearing, target.bearing)) < 0.06;
+  if (settled) {
+    navigationCameraState = { ...target };
+    navigationCameraFrame = 0;
+    return;
+  }
+  navigationCameraFrame = requestAnimationFrame(animateNavigationCamera);
+}
+
+function followNavigationCamera(point, bearing) {
+  const camera = navigationCamera();
+  navigationCameraTarget = {
+    lon: point.lon,
+    lat: point.lat,
+    zoom: camera.zoom,
+    pitch: camera.pitch,
+    bearing: Number.isFinite(bearing) ? bearing : map.getBearing(),
+  };
+  if (REDUCED_MOTION.matches) {
+    stopNavigationCamera();
+    navigationCameraState = { ...navigationCameraTarget };
+    map.jumpTo({
+      center: [point.lon, point.lat],
+      zoom: camera.zoom,
+      pitch: camera.pitch,
+      bearing: navigationCameraTarget.bearing,
+    });
+    return;
+  }
+  if (!navigationCameraState) navigationCameraState = readNavigationCamera();
+  if (!navigationCameraFrame) navigationCameraFrame = requestAnimationFrame(animateNavigationCamera);
+}
+
 function beginManualNavigationView() {
   if (!navigationActive) return;
+  stopNavigationCamera();
   window.clearTimeout(followResumeTimer);
   followSuspendedUntil = Number.POSITIVE_INFINITY;
   document.body.classList.add("nav-detached");
@@ -823,6 +914,7 @@ export function setNavigationMode(active) {
   followSuspendedUntil = 0;
   document.body.classList.remove("nav-detached");
   if (!active) {
+    stopNavigationCamera({ clearTarget: true });
     setSourceData("navigation-point", emptyCollection());
     currentNavigationPoint = null;
     currentNavigationBearing = null;
@@ -831,12 +923,17 @@ export function setNavigationMode(active) {
     clearNavigationPlaces();
   }
   const camera = navigationCamera();
-  map.easeTo({
-    padding: active ? camera.padding : panelPadding(),
-    pitch: active ? camera.pitch : 32,
-    bearing: active ? -18 : -8,
-    duration: REDUCED_MOTION.matches ? 0 : 620,
-  });
+  if (active) {
+    map.jumpTo({ padding: camera.padding });
+    navigationCameraState = readNavigationCamera();
+  } else {
+    map.easeTo({
+      padding: panelPadding(),
+      pitch: 32,
+      bearing: -8,
+      duration: REDUCED_MOTION.matches ? 0 : 620,
+    });
+  }
 }
 
 export function setNavigationPoint(point, bearing = null, follow = false) {
@@ -858,14 +955,7 @@ export function setNavigationPoint(point, bearing = null, follow = false) {
       .addTo(map);
   }
   if (follow && Date.now() >= followSuspendedUntil) {
-    const camera = navigationCamera();
-    map.jumpTo({
-      center: [point.lon, point.lat],
-      zoom: camera.zoom,
-      pitch: camera.pitch,
-      padding: camera.padding,
-      bearing: Number.isFinite(bearing) ? bearing : map.getBearing(),
-    });
+    followNavigationCamera(point, bearing);
   }
 }
 
@@ -909,5 +999,6 @@ export function recenterNavigation() {
   window.clearTimeout(followResumeTimer);
   followSuspendedUntil = 0;
   document.body.classList.remove("nav-detached");
+  stopNavigationCamera();
   if (currentNavigationPoint) setNavigationPoint(currentNavigationPoint, currentNavigationBearing, true);
 }

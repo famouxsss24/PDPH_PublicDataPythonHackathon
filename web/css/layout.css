@@ -356,6 +356,10 @@ body.shadow-open .route-legend {
 }
 
 .navigation-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   overflow: hidden;
   color: rgba(255, 255, 255, 0.72);
   font-size: 12px;
@@ -363,6 +367,21 @@ body.shadow-open .route-legend {
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.navigation-mode::before {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #7ee0ad;
+  box-shadow: 0 0 0 4px rgba(126, 224, 173, 0.12);
+  content: "";
+}
+
+body[data-navigation-mode="preview"] .navigation-mode::before {
+  background: #78bfff;
+  box-shadow: 0 0 0 4px rgba(120, 191, 255, 0.14);
 }
 
 .next-turn {

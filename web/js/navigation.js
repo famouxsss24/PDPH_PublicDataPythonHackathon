@@ -8,7 +8,6 @@ import { fetchNearbyPlaces } from "./api.js";
 import { getState, subscribe } from "./state.js";
 import { refreshIcons } from "./icons.js";
 
-const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 const MOBILE_UI = window.matchMedia("(max-width: 700px)");
 const LOW_POWER = window.matchMedia("(max-width: 700px)").matches
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
@@ -17,8 +16,6 @@ const FRAME_INTERVAL = LOW_POWER ? 40 : 30;
 const elements = {};
 let previewFrame = 0;
 let previewStarted = 0;
-let previewOffset = 0;
-let previewPaused = false;
 let geolocationWatch = null;
 let routeTrack = null;
 let lastNearbyPoint = null;
@@ -26,6 +23,9 @@ let lastNearbyAt = 0;
 let nearbyToken = 0;
 let lastVisualUpdate = 0;
 let uiIdleTimer = 0;
+let navigationMode = "live";
+let locationState = "waiting";
+let lastLivePosition = null;
 
 function scheduleNavigationUiIdle() {
   window.clearTimeout(uiIdleTimer);
@@ -134,13 +134,13 @@ async function updateNearbyPlaces(point, { force = false } = {}) {
 }
 
 function animatePreview(now) {
-  if (!routeTrack || previewPaused) return;
+  if (!routeTrack || navigationMode !== "preview") return;
   if (now - lastVisualUpdate < FRAME_INTERVAL) {
     previewFrame = requestAnimationFrame(animatePreview);
     return;
   }
   lastVisualUpdate = now;
-  const elapsed = previewOffset + (now - previewStarted);
+  const elapsed = now - previewStarted;
   const progress = Math.min(1, elapsed / 52000);
   const position = pointAt(progress);
   if (!position) return;
@@ -150,41 +150,66 @@ function animatePreview(now) {
   if (progress < 1) {
     previewFrame = requestAnimationFrame(animatePreview);
   } else {
-    previewPaused = true;
     elements.mode.textContent = "목적지 도착";
     syncPreviewButton();
   }
 }
 
 function syncPreviewButton() {
-  elements.preview.innerHTML = `<i data-lucide="${previewPaused ? "play" : "pause"}"></i><span>${previewPaused ? "미리보기 재생" : "미리보기 정지"}</span>`;
+  const previewing = navigationMode === "preview";
+  elements.preview.setAttribute("aria-pressed", String(previewing));
+  elements.preview.classList.toggle("is-active", previewing);
+  elements.preview.innerHTML = previewing
+    ? '<i data-lucide="locate-fixed"></i><span>실시간 안내</span>'
+    : '<i data-lucide="play"></i><span>경로 미리보기</span>';
   refreshIcons(elements.preview);
 }
 
-function startPreview({ reset = false } = {}) {
+function liveModeLabel() {
+  if (locationState === "waiting") return "현재 위치 확인 중";
+  if (locationState === "off-route") return "경로 근처에서 안내 시작";
+  if (locationState === "unavailable") return "위치 권한 확인 필요";
+  return "실시간 위치 안내";
+}
+
+function syncNavigationMode() {
+  document.body.dataset.navigationMode = navigationMode;
+  elements.mode.textContent = navigationMode === "live" ? liveModeLabel() : "경로 미리보기";
+  syncPreviewButton();
+}
+
+function startPreview() {
   if (!routeTrack) return;
   cancelAnimationFrame(previewFrame);
-  if (reset) previewOffset = 0;
-  previewPaused = false;
+  navigationMode = "preview";
   previewStarted = performance.now();
-  elements.mode.textContent = "경로 미리보기";
-  elements.preview.hidden = false;
-  syncPreviewButton();
+  lastVisualUpdate = 0;
+  syncNavigationMode();
   previewFrame = requestAnimationFrame(animatePreview);
 }
 
-function pausePreview() {
-  if (previewPaused) {
-    previewStarted = performance.now();
-    previewPaused = false;
-    syncPreviewButton();
-    previewFrame = requestAnimationFrame(animatePreview);
-    return;
-  }
-  previewOffset += performance.now() - previewStarted;
-  previewPaused = true;
+function returnToLive() {
   cancelAnimationFrame(previewFrame);
-  syncPreviewButton();
+  previewFrame = 0;
+  navigationMode = "live";
+  syncNavigationMode();
+  if (lastLivePosition) {
+    setNavigationPoint(lastLivePosition.point, lastLivePosition.bearing, true);
+    updateNearbyPlaces(lastLivePosition.point, { force: true });
+    updateProgress(lastLivePosition.progress);
+  } else {
+    const first = pointAt(0);
+    if (first) {
+      setNavigationPoint(first.point, first.bearing, true);
+      updateNearbyPlaces(first.point, { force: true });
+    }
+    updateProgress(0);
+  }
+}
+
+function togglePreview() {
+  if (navigationMode === "preview") returnToLive();
+  else startPreview();
 }
 
 function closestProgress(point) {
@@ -202,22 +227,36 @@ function closestProgress(point) {
 }
 
 function beginGeolocation() {
-  if (!navigator.geolocation || !window.isSecureContext) return;
+  if (!navigator.geolocation || !window.isSecureContext) {
+    locationState = "unavailable";
+    syncNavigationMode();
+    return;
+  }
   geolocationWatch = navigator.geolocation.watchPosition(
     (position) => {
       const point = { lat: position.coords.latitude, lon: position.coords.longitude };
       const closest = closestProgress(point);
-      if (closest.distance > 300) return;
-      cancelAnimationFrame(previewFrame);
-      previewPaused = true;
-      elements.mode.textContent = "실시간 위치 안내";
-      elements.preview.hidden = true;
-      setNavigationPoint(point, position.coords.heading, true);
+      if (closest.distance > 300) {
+        locationState = "off-route";
+        if (navigationMode === "live") syncNavigationMode();
+        return;
+      }
+      const previousPoint = lastLivePosition?.point;
+      const moved = previousPoint ? haversine(previousPoint, point) : 0;
+      const heading = Number.isFinite(position.coords.heading)
+        ? position.coords.heading
+        : moved > 3 ? bearing(previousPoint, point) : lastLivePosition?.bearing;
+      lastLivePosition = { point, bearing: heading, progress: closest.progress };
+      locationState = "active";
+      if (navigationMode !== "live") return;
+      syncNavigationMode();
+      setNavigationPoint(point, heading, true);
       updateNearbyPlaces(point);
       updateProgress(closest.progress);
     },
     () => {
-      if (!previewFrame && !previewPaused) startPreview();
+      locationState = "unavailable";
+      if (navigationMode === "live") syncNavigationMode();
     },
     { enableHighAccuracy: true, timeout: 9000, maximumAge: 3000 },
   );
@@ -226,14 +265,17 @@ function beginGeolocation() {
 function stopNavigation() {
   cancelAnimationFrame(previewFrame);
   previewFrame = 0;
-  previewOffset = 0;
   routeTrack = null;
+  navigationMode = "live";
+  locationState = "waiting";
+  lastLivePosition = null;
   lastNearbyPoint = null;
   lastNearbyAt = 0;
   nearbyToken += 1;
   setNavigationPlaces([]);
   if (geolocationWatch !== null) navigator.geolocation.clearWatch(geolocationWatch);
   geolocationWatch = null;
+  delete document.body.dataset.navigationMode;
   resetNavigationUi();
   setNavigationMode(false);
 }
@@ -242,8 +284,9 @@ function beginNavigation(state) {
   const route = state.routeData?.options.find((item) => item.id === state.selectedRouteId);
   if (!route) return;
   routeTrack = buildTrack(route);
-  previewOffset = 0;
-  previewPaused = false;
+  navigationMode = "live";
+  locationState = "waiting";
+  lastLivePosition = null;
   lastVisualUpdate = 0;
   elements.destination.textContent = state.destination?.label ?? "목적지";
   resetNavigationUi();
@@ -254,13 +297,7 @@ function beginNavigation(state) {
     updateNearbyPlaces(first.point, { force: true });
   }
   updateProgress(0);
-  if (!REDUCED_MOTION.matches) startPreview({ reset: true });
-  else {
-    elements.mode.textContent = "경로 미리보기";
-    elements.preview.hidden = false;
-    previewPaused = true;
-    syncPreviewButton();
-  }
+  syncNavigationMode();
   beginGeolocation();
   scheduleNavigationUiIdle();
 }
@@ -273,7 +310,7 @@ export function initNavigation() {
   elements.preview = document.querySelector("#previewToggle");
   elements.recenter = document.querySelector("#recenterNavigation");
 
-  elements.preview.addEventListener("click", pausePreview);
+  elements.preview.addEventListener("click", togglePreview);
   elements.recenter.addEventListener("click", () => {
     recenterNavigation();
     wakeNavigationUi();
@@ -284,7 +321,7 @@ export function initNavigation() {
     target?.addEventListener("pointercancel", scheduleNavigationUiIdle, { passive: true });
   }
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && getState().phase === "navigate" && !previewPaused) pausePreview();
+    if (document.hidden && getState().phase === "navigate" && navigationMode === "preview") returnToLive();
   });
 
   subscribe((state, actionName) => {

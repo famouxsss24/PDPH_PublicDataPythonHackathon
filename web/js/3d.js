@@ -46,6 +46,7 @@ let lastRunnerUpdate = 0;
 
 refreshIcons();
 elements.play.disabled = true;
+elements.range.disabled = true;
 elements.clock.textContent = `${String(currentHour).padStart(2, "0")}:00`;
 elements.range.value = String(currentHour);
 
@@ -67,6 +68,71 @@ const sceneBounds = origin && destination
     Math.max(origin.lat, destination.lat) + 0.006,
   ]
   : [127.038, 37.61, 127.116, 37.694];
+const sceneLod = LOW_POWER ? "mobile" : "standard";
+const initialFrameHour = Math.max(7, Math.min(18, Math.round(initialHour)));
+let mockFramesPromise = null;
+
+async function fetchSceneJson(url, errorMessage) {
+  const response = await fetch(url, { cache: "force-cache" });
+  if (!response.ok) throw new Error(errorMessage);
+  return response.json();
+}
+
+function fetchAllShadowFrames() {
+  if (USE_MOCK) {
+    mockFramesPromise ??= fetchSceneJson("./mock/shade_frames.json", "그림자 프레임을 불러오지 못했습니다.");
+    return mockFramesPromise;
+  }
+  const params = new URLSearchParams({ bbox: sceneBounds.join(","), lod: sceneLod });
+  return fetchSceneJson(`/api/shade_frames?${params}`, "그림자 프레임을 불러오지 못했습니다.");
+}
+
+async function fetchInitialShadowFrame() {
+  if (USE_MOCK) {
+    const frames = await fetchAllShadowFrames();
+    return {
+      type: "FeatureCollection",
+      features: frames.features.filter((feature) => feature.properties.hour === initialFrameHour),
+    };
+  }
+  const params = new URLSearchParams({
+    hour: String(initialFrameHour),
+    bbox: sceneBounds.join(","),
+    lod: sceneLod,
+  });
+  return fetchSceneJson(`/api/shade_frame?${params}`, "현재 시각 그림자를 불러오지 못했습니다.");
+}
+
+async function fetchSelectedRoute() {
+  if (!origin || !destination) return null;
+  const routeHour = [10, 13, 14, 15, 17].reduce((best, hour) =>
+    Math.abs(hour - initialHour) < Math.abs(best - initialHour) ? hour : best,
+  );
+  const params = new URLSearchParams({
+    start_lat: origin.lat,
+    start_lon: origin.lon,
+    end_lat: destination.lat,
+    end_lon: destination.lon,
+    hour: routeHour,
+  });
+  const data = await fetchSceneJson(
+    USE_MOCK ? `./mock/routes_${routeHour}.json` : `/api/routes?${params}`,
+    "선택 경로를 불러오지 못했습니다.",
+  );
+  const requestedIndex = Number(/r(\d+)$/.exec(selectedOption ?? "")?.[1]);
+  return USE_MOCK
+    ? data.options.find((option) => option.id === selectedOption)
+      ?? data.options.find((option) => option.id === data.recommended_id)
+      ?? data.options[0]
+    : data.routes[Number.isInteger(requestedIndex) ? requestedIndex : data.recommended_idx]
+      ?? data.routes[data.recommended_idx];
+}
+
+// Start scene I/O before the base map finishes loading so network waits overlap.
+const buildingsPromise = fetchBuildings({ bbox: sceneBounds, lod: sceneLod });
+const initialShadowPromise = fetchInitialShadowFrame();
+const sunPositionsPromise = fetchSunPositions().catch(() => []);
+const selectedRoutePromise = fetchSelectedRoute();
 
 const map = new window.maplibregl.Map({
   container: "map",
@@ -137,6 +203,10 @@ function syncPlayButton() {
 }
 
 function setShadowLayers(hour) {
+  if (map.getLayer("shade-initial") && !map.getSource("shadow-frames")) {
+    map.setPaintProperty("shade-initial", "fill-opacity", sceneTheme === "dark" ? 0.2 : 0.22);
+    return;
+  }
   const lower = [...frameHours].reverse().find((candidate) => candidate <= hour) ?? frameHours[0];
   const upper = frameHours.find((candidate) => candidate >= hour) ?? frameHours.at(-1);
   const ratio = lower === upper ? 0 : (hour - lower) / (upper - lower);
@@ -313,31 +383,15 @@ function applySceneTheme(theme) {
       map.setPaintProperty(`shade-${hour}`, "fill-color", theme === "dark" ? "#178dcc" : "#193554");
     }
   }
+  if (map.getLayer("shade-initial")) {
+    map.setPaintProperty("shade-initial", "fill-color", theme === "dark" ? "#178dcc" : "#193554");
+  }
   if (frameHours.length) setShadowLayers(currentHour);
 }
 
 async function drawRoute() {
-  if (!origin || !destination) return;
-  const routeHour = [10, 13, 14, 15, 17].reduce((best, hour) =>
-    Math.abs(hour - currentHour) < Math.abs(best - currentHour) ? hour : best,
-  );
-  const params = new URLSearchParams({
-    start_lat: origin.lat,
-    start_lon: origin.lon,
-    end_lat: destination.lat,
-    end_lon: destination.lon,
-    hour: routeHour,
-  });
-  const response = await fetch(USE_MOCK ? `./mock/routes_${routeHour}.json` : `/api/routes?${params}`);
-  if (!response.ok) throw new Error("선택 경로를 불러오지 못했습니다.");
-  const data = await response.json();
-  const requestedIndex = Number(/r(\d+)$/.exec(selectedOption ?? "")?.[1]);
-  const route = USE_MOCK
-    ? data.options.find((option) => option.id === selectedOption)
-      ?? data.options.find((option) => option.id === data.recommended_id)
-      ?? data.options[0]
-    : data.routes[Number.isInteger(requestedIndex) ? requestedIndex : data.recommended_idx]
-      ?? data.routes[data.recommended_idx];
+  const route = await selectedRoutePromise;
+  if (!route) return;
   runnerCoordinates = (route.segments ?? [{ coords: route.coords }]).flatMap((segment, index) =>
     segment.coords.slice(index === 0 ? 0 : 1).map(([lat, lon]) => [lon, lat]),
   );
@@ -401,85 +455,123 @@ async function drawRoute() {
   elements.evidence.innerHTML = `<strong>선택 경로</strong>${route.time_min ?? route.minutes}분 · ${Math.round(route.dist_m ?? route.distance_m)}m · 그늘 ${route.shade_pct}%`;
 }
 
+function installBuildings(buildings, before) {
+  map.addSource("buildings", { type: "geojson", data: buildings });
+  map.addLayer({
+    id: "buildings-3d",
+    type: "fill-extrusion",
+    source: "buildings",
+    paint: {
+      "fill-extrusion-height": ["coalesce", ["get", "height_eff"], 6],
+      "fill-extrusion-color": buildingColorExpression(sceneTheme),
+      "fill-extrusion-opacity": sceneTheme === "dark" ? 0.9 : 0.98,
+      "fill-extrusion-vertical-gradient": sceneTheme === "dark",
+    },
+  }, before);
+  map.addLayer({
+    id: "building-footprints",
+    type: "line",
+    source: "buildings",
+    minzoom: 14,
+    paint: {
+      "line-color": "#87a7b7",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 17, 1.05],
+      "line-opacity": 0.34,
+    },
+  }, before);
+  applySceneTheme(sceneTheme);
+}
+
+function installInitialShadow(frames) {
+  frameHours = [initialFrameHour];
+  map.addSource("shadow-initial", { type: "geojson", data: frames });
+  map.addLayer({
+    id: "shade-initial",
+    type: "fill",
+    source: "shadow-initial",
+    paint: {
+      "fill-color": sceneTheme === "dark" ? "#178dcc" : "#193554",
+      "fill-opacity": sceneTheme === "dark" ? 0.2 : 0.22,
+      "fill-antialias": true,
+    },
+  }, "buildings-3d");
+}
+
+function installAllShadowFrames(frames) {
+  frameHours = [...new Set(frames.features.map((feature) => feature.properties.hour))].sort((a, b) => a - b);
+  map.addSource("shadow-frames", { type: "geojson", data: frames });
+  for (const hour of frameHours) {
+    map.addLayer({
+      id: `shade-${hour}`,
+      type: "fill",
+      source: "shadow-frames",
+      filter: ["==", ["get", "hour"], hour],
+      paint: {
+        "fill-color": sceneTheme === "dark" ? "#178dcc" : "#193554",
+        "fill-opacity": 0,
+        "fill-antialias": true,
+        "fill-opacity-transition": { duration: LOW_POWER ? 360 : 480, delay: 0 },
+      },
+    }, "buildings-3d");
+  }
+  if (map.getLayer("shade-initial")) map.removeLayer("shade-initial");
+  if (map.getSource("shadow-initial")) map.removeSource("shadow-initial");
+  currentHour = Math.max(frameHours[0], Math.min(frameHours.at(-1), initialHour));
+  transitionToHour(currentHour, { animate: false });
+  elements.range.disabled = false;
+  elements.play.disabled = false;
+}
+
+function bindBuildingInspection() {
+  map.on("mousemove", "buildings-3d", (event) => {
+    map.getCanvas().style.cursor = "pointer";
+    const feature = event.features?.[0];
+    if (!feature) return;
+    const height = Number(feature.properties.height_eff);
+    const floors = Number(feature.properties.floors);
+    elements.hover.textContent = `높이 ${height.toFixed(1)}m${floors > 0 ? ` · 지상 ${Math.round(floors)}층` : ""}`;
+  });
+  map.on("mouseleave", "buildings-3d", () => {
+    map.getCanvas().style.cursor = "";
+    elements.hover.textContent = "건물을 가리키면 높이와 층수를 표시합니다.";
+  });
+}
+
+function scheduleShadowAnimation(buildingCount) {
+  const load = async () => {
+    try {
+      const frames = await fetchAllShadowFrames();
+      installAllShadowFrames(frames);
+      elements.status.textContent = `${USE_MOCK ? "데모 · " : ""}건물 ${buildingCount.toLocaleString("ko-KR")}동 · 그림자 ${frameHours.length}개 시각`;
+    } catch (error) {
+      console.warn("시간별 그림자 애니메이션을 준비하지 못했습니다.", error);
+      elements.status.textContent = `건물 ${buildingCount.toLocaleString("ko-KR")}동 · 현재 시각 그림자`;
+    }
+  };
+  if ("requestIdleCallback" in window) window.requestIdleCallback(load, { timeout: 500 });
+  else window.setTimeout(load, 80);
+}
+
 map.on("load", async () => {
   try {
     updateSun(initialHour);
     const before = firstSymbolLayer();
-    elements.status.textContent = "시간별 그림자를 불러오는 중";
-    const [buildings, frameResponse, positions] = await Promise.all([
-      fetchBuildings({ bbox: sceneBounds, lod: LOW_POWER ? "mobile" : "standard" }),
-      fetch(
-        USE_MOCK
-          ? "./mock/shade_frames.json"
-          : `/api/shade_frames?${new URLSearchParams({ bbox: sceneBounds.join(","), lod: LOW_POWER ? "mobile" : "standard" })}`,
-      ),
-      fetchSunPositions().catch(() => []),
-    ]);
-    if (!frameResponse.ok) throw new Error("그림자 프레임을 불러오지 못했습니다.");
-    const frames = await frameResponse.json();
-    sunPositions = positions;
-    updateSun(initialHour);
+    elements.status.textContent = "건물과 경로를 먼저 준비하는 중";
+    const buildings = await buildingsPromise;
+    installBuildings(buildings, before);
+    bindBuildingInspection();
+    elements.status.textContent = `건물 ${buildings.features.length.toLocaleString("ko-KR")}동 · 경로 표시 중`;
 
-    frameHours = [...new Set(frames.features.map((feature) => feature.properties.hour))].sort((a, b) => a - b);
-    map.addSource("shadow-frames", { type: "geojson", data: frames });
-    for (const hour of frameHours) {
-      map.addLayer({
-        id: `shade-${hour}`,
-        type: "fill",
-        source: "shadow-frames",
-        filter: ["==", ["get", "hour"], hour],
-        paint: {
-          "fill-color": sceneTheme === "dark" ? "#178dcc" : "#193554",
-          "fill-opacity": hour === initialHour ? (sceneTheme === "dark" ? 0.2 : 0.22) : 0,
-          "fill-antialias": true,
-          "fill-opacity-transition": { duration: LOW_POWER ? 360 : 480, delay: 0 },
-        },
-      }, before);
-    }
-
-    map.addSource("buildings", { type: "geojson", data: buildings });
-    map.addLayer({
-      id: "buildings-3d",
-      type: "fill-extrusion",
-      source: "buildings",
-      paint: {
-        "fill-extrusion-height": ["coalesce", ["get", "height_eff"], 6],
-        "fill-extrusion-color": buildingColorExpression(sceneTheme),
-        "fill-extrusion-opacity": sceneTheme === "dark" ? 0.9 : 0.98,
-        "fill-extrusion-vertical-gradient": sceneTheme === "dark",
-      },
-    }, before);
-    applySceneTheme(sceneTheme);
-    map.addLayer({
-      id: "building-footprints",
-      type: "line",
-      source: "buildings",
-      minzoom: 14,
-      paint: {
-        "line-color": "#87a7b7",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 17, 1.05],
-        "line-opacity": 0.34,
-      },
-    }, before);
-
-    currentHour = frameHours.includes(initialHour) ? initialHour : frameHours[0];
-    await transitionToHour(currentHour, { animate: false });
-    elements.play.disabled = false;
-    elements.status.textContent = `${USE_MOCK ? "데모 · " : ""}건물 ${buildings.features.length.toLocaleString("ko-KR")}동 · 그림자 ${frameHours.length}개 시각`;
-    await drawRoute();
-
-    map.on("mousemove", "buildings-3d", (event) => {
-      map.getCanvas().style.cursor = "pointer";
-      const feature = event.features?.[0];
-      if (!feature) return;
-      const height = Number(feature.properties.height_eff);
-      const floors = Number(feature.properties.floors);
-      elements.hover.textContent = `높이 ${height.toFixed(1)}m${floors > 0 ? ` · 지상 ${Math.round(floors)}층` : ""}`;
+    const sunTask = sunPositionsPromise.then((positions) => {
+      sunPositions = positions;
+      updateSun(initialHour);
     });
-    map.on("mouseleave", "buildings-3d", () => {
-      map.getCanvas().style.cursor = "";
-      elements.hover.textContent = "건물을 가리키면 높이와 층수를 표시합니다.";
-    });
+    const initialShadowTask = initialShadowPromise
+      .then(installInitialShadow)
+      .catch((error) => console.warn("현재 시각 그림자를 표시하지 못했습니다.", error));
+    await Promise.all([drawRoute(), sunTask, initialShadowTask]);
+    elements.status.textContent = `건물 ${buildings.features.length.toLocaleString("ko-KR")}동 · 시간 애니메이션 준비 중`;
+    scheduleShadowAnimation(buildings.features.length);
   } catch (error) {
     showError(error.message);
   }

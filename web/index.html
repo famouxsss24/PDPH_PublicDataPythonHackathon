@@ -5,7 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f3f6f2">
   <title>그늘로 - 햇빛을 피해 걷는 길</title>
-  <link rel="preconnect" href="https://tiles.openfreemap.org">
+  <link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin>
+  <link rel="dns-prefetch" href="https://b.basemaps.cartocdn.com">
+  <link rel="dns-prefetch" href="https://c.basemaps.cartocdn.com">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="prefetch" href="./3d.html">
+  <link rel="prefetch" href="./css/3d.css" as="style">
+  <link rel="prefetch" href="./js/3d.js?v=20260715c" as="script">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="./css/tokens.css">
@@ -174,7 +181,7 @@
         <button id="backToRoutes" class="icon-button on-dark" type="button" aria-label="경로 비교로 돌아가기">
           <i data-lucide="arrow-left"></i>
         </button>
-        <span id="navigationMode" class="navigation-mode">경로 미리보기</span>
+        <span id="navigationMode" class="navigation-mode">현재 위치 확인 중</span>
         <div class="navigation-actions">
           <button id="recenterNavigation" class="icon-button on-dark" type="button" aria-label="현재 안내 위치로 이동" title="안내 위치로 이동">
             <i data-lucide="focus"></i>
@@ -197,8 +204,8 @@
         </div>
         <div class="navigation-progress-track" aria-hidden="true"><span id="navigationProgressBar"></span></div>
         <div class="navigation-bottom-actions">
-          <button id="previewToggle" class="secondary-command" type="button">
-            <i data-lucide="pause"></i><span>미리보기 정지</span>
+          <button id="previewToggle" class="secondary-command" type="button" aria-pressed="false">
+            <i data-lucide="play"></i><span>경로 미리보기</span>
           </button>
           <details class="steps-disclosure">
             <summary>전체 경로</summary>
@@ -249,6 +256,6 @@
   </dialog>
 
   <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
-  <script type="module" src="./js/app.js?v=20260715b"></script>
+  <script type="module" src="./js/app.js?v=20260715c"></script>
 </body>
 </html>

@@ -807,6 +807,11 @@
   color: #fff;
 }
 
+.navigation-bottom .secondary-command.is-active {
+  background: rgba(77, 163, 231, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(133, 204, 255, 0.32);
+}
+
 .steps-disclosure {
   position: relative;
   color: rgba(255, 255, 255, 0.78);
