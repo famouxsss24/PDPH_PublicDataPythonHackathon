@@ -2,7 +2,7 @@
 
 import networkx as nx
 
-from gneulro.graph import _turn_word, best_paths, route_steps
+from gneulro.graph import _edge_shade, _turn_word, best_paths, route_segments, route_steps
 
 
 def toy_graph() -> nx.MultiDiGraph:
@@ -55,3 +55,28 @@ def test_route_steps_merges_straight():
     assert len(steps) == 2
     assert steps[0]["name"] == "동일로" and steps[0]["dist_m"] == 200
     assert steps[1]["turn"] == "우회전" and steps[1]["name"] == "상계로"
+
+
+def test_route_segments_merges_same_exposure():
+    """연속된 같은 노출 상태는 합치고 햇빛/그늘 경계는 분리해야 한다."""
+    graph = nx.MultiDiGraph()
+    coordinates = [(127.0, 37.0), (127.001, 37.0), (127.002, 37.0), (127.003, 37.0)]
+    for node, (x, y) in enumerate(coordinates):
+        graph.add_node(node, x=x, y=y)
+    graph.add_edge(0, 1, length=80.0, shade_14=0.1)
+    graph.add_edge(1, 2, length=80.0, shade_14=0.2)
+    graph.add_edge(2, 3, length=80.0, shade_14=0.9)
+
+    segments = route_segments(graph, [0, 1, 2, 3], 14)
+
+    assert [segment["shaded"] for segment in segments] == [False, True]
+    assert len(segments[0]["coords"]) == 3
+    assert segments[0]["coords"][-1] == segments[1]["coords"][0]
+
+
+def test_edge_shade_interpolates_departure_time():
+    """대표 프레임 사이의 10분 단위 출발 시각은 엣지 그늘값을 보간해야 한다."""
+    edge = {"shade_14": 0.2, "shade_15": 0.8}
+    assert _edge_shade(edge, 14.0) == 0.2
+    assert _edge_shade(edge, 14.5) == 0.5
+    assert _edge_shade(edge, 15.0) == 0.8

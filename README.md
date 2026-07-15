@@ -1,50 +1,56 @@
 # 그늘로 (gneulro)
 
-**태양을 피하는 그늘 경로 내비게이션** — 노원구 건물 그림자를 물리 계산해
-"최단경로 vs 그늘경로"를 비교하고 최적 출발시각을 추천한다.
+노원구 건물 높이와 가로수, 태양 위치를 이용해 햇빛 노출이 적은 도보 경로를 비교하는 시민용 내비게이션이다.
 
-## 아키텍처
+현재 구현과 데이터 의미는 [프로젝트 현황](docs/PROJECT_STATUS.md), 심사 전 확인할 문제는 [경진대회 위험 감사](docs/COMPETITION_RISK_AUDIT.md), 확정 UI/API 설계는 [UI 계획](docs/UI_PLAN.md)을 기준으로 한다.
 
+## 현재 화면 흐름
+
+`장소·주소 검색 → 최대 5개 경로 비교 → 도보 안내 → 3D 그림자 근거 화면`
+
+- 출발·도착 자동완성, 지도 보조 선택, 순서 교환
+- 추천/최단/그늘 우선 경로와 시간대별 그늘 구간
+- 진행 방향 화살표, 턴바이턴, 주변 건물·상호 라벨
+- 라이트/다크 모드, 모바일 추적 카메라, 수동 지도 탐색
+- 높이 기반 3D 건물과 07~18시 그림자 애니메이션
+
+## 실행
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+# 파일 저장 모드는 .env에서 USE_POSTGIS=false
+.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
-공공데이터(건물 shp·가로수·S-DoT)
-  → 배치 파이프라인 (그림자 계산 → 50m 격자 그늘율 → 보행망 가중치)
-  → 저장소 (PostGIS 또는 GeoParquet — USE_POSTGIS로 전환)
-  → FastAPI (/api/shade /grid /route /departure)
-  → Leaflet 웹 지도 (클릭 2번 → 경로 비교)
+
+브라우저에서 http://127.0.0.1:8000 을 연다.
+
+## 데이터 파이프라인
+
+```powershell
+.venv\Scripts\python.exe pipeline\01_prepare.py
+.venv\Scripts\python.exe pipeline\02_shadows.py
+.venv\Scripts\python.exe pipeline\03_grid.py
+.venv\Scripts\python.exe pipeline\04_graph.py
+.venv\Scripts\python.exe pipeline\08_places.py
+.venv\Scripts\python.exe pipeline\09_shadow_frames.py
+.venv\Scripts\python.exe pipeline\10_mockdata.py
 ```
 
-## 실행 방법
-
-```bash
-# 0. 준비
-python -m venv .venv && .venv/Scripts/activate   # Windows
-pip install -e ".[dev]"
-copy .env.example .env        # 파일 모드는 USE_POSTGIS=false 로 변경
-
-# (선택) PostGIS 모드: docker compose up -d
-
-# 1. 데이터 배치 (docs/SPEC.md §3 참고, data/raw/에 수동 다운로드)
-
-# 2. 배치 파이프라인
-python pipeline/01_prepare.py
-python pipeline/02_shadows.py
-python pipeline/03_grid.py
-python pipeline/04_graph.py
-python pipeline/05_validate.py   # S-DoT 보조 검증 (reports/ 산출)
-
-# 3. 서버 → http://localhost:8000
-uvicorn api.main:app --reload
-```
+S-DoT 보조 분석은 `.venv\Scripts\python.exe pipeline\05_validate.py`로 실행한다. 현재 결과는 냉각 효과를 입증하지 않으므로 문서의 한계를 먼저 확인해야 한다.
 
 ## 검증
 
-```bash
-ruff check .
-pytest
+```powershell
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m pytest -q
+Get-ChildItem web\js\*.js | ForEach-Object { node --check $_.FullName }
 ```
 
-## 알려진 한계
+## 주의
 
-- 그림자는 convex hull 1차 근사 — 오목(ㄷ자) 건물은 과대 추정될 수 있음.
-- 태양각은 노원구 중심점 1회 계산 (구 규모에서 공간 차이 무시 가능).
-- S-DoT 검증은 상관관계의 **보조적 확인**이며 인과 증명이 아님.
+- 서비스 범위는 노원구다.
+- 2026-08-06 그림자는 맑은 하늘 가정의 물리 시뮬레이션이며 실측·실시간 그림자가 아니다.
+- Kakao Local을 활성화하지 않으면 OSM과 공공 지번 색인으로 폴백하므로 일부 상호가 검색되지 않는다.
+- `web/mock`은 손으로 만든 가짜 데이터가 아니라 실데이터 산출물의 정적 스냅샷이다.

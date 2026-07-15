@@ -9,6 +9,13 @@ import geopandas as gpd
 from gneulro.config import CRS_WGS, DATA_PROCESSED
 
 
+def _round_coords(obj: list | float, ndigits: int = 5) -> list | float:
+    """GeoJSON 좌표 배열(중첩 리스트)의 실수를 재귀적으로 반올림한다."""
+    if isinstance(obj, list):
+        return [_round_coords(x, ndigits) for x in obj]
+    return round(obj, ndigits)
+
+
 def _load_env() -> None:
     """프로젝트 루트의 .env 파일을 읽어 환경변수로 등록한다 (이미 있으면 유지)."""
     env_path = Path(".env")
@@ -47,9 +54,16 @@ class Store:
             return gpd.read_postgis(f'SELECT * FROM "{name}"', self.engine, geom_col="geometry")
         return gpd.read_parquet(DATA_PROCESSED / f"{name}.parquet")
 
-    def layer_geojson(self, name: str, simplify_m: float = 2.0) -> dict:
-        """레이어를 4326 변환·단순화 후 GeoJSON FeatureCollection dict로 반환한다 (API용)."""
-        gdf = self.load_layer(name)
+    def to_geojson(self, gdf: gpd.GeoDataFrame, simplify_m: float = 2.0) -> dict:
+        """GeoDataFrame을 단순화한 WGS84 GeoJSON dict로 직렬화한다."""
+        gdf = gdf.copy()
         gdf.geometry = gdf.geometry.simplify(simplify_m)
         gdf = gdf.to_crs(CRS_WGS)
-        return json.loads(gdf.to_json())
+        fc = json.loads(gdf.to_json())
+        for feat in fc["features"]:  # 소수점 15자리 좌표가 응답을 3배 키움 → 5자리(약 1m)로 절삭
+            feat["geometry"]["coordinates"] = _round_coords(feat["geometry"]["coordinates"])
+        return fc
+
+    def layer_geojson(self, name: str, simplify_m: float = 2.0) -> dict:
+        """레이어를 4326 변환·단순화 후 GeoJSON FeatureCollection dict로 반환한다 (API용)."""
+        return self.to_geojson(self.load_layer(name), simplify_m)

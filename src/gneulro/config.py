@@ -10,6 +10,7 @@ TZ = ZoneInfo("Asia/Seoul")
 CALC_DATE = date(2026, 8, 6)  # 대표일 = 본선 발표일
 HOURS = [10, 13, 14, 15, 17]  # 사전계산 시간대
 PLACE = "Nowon-gu, Seoul, South Korea"
+NOWON_BBOX = (127.038, 37.610, 127.116, 37.694)  # 서·남·동·북 (건물 데이터 범위 + 여유)
 
 GRID_SIZE_M = 50  # 격자 한 변 길이 (m)
 TREE_SHADE_RADIUS_M = 3.0  # 가로수 그늘 반경 (m)

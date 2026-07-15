@@ -77,13 +77,29 @@ def attach_edge_shade(
     return G
 
 
-def _shade_weight(hour: int, beta: float):
+def _edge_shade(data: dict, hour: int | float) -> float:
+    """대표 시간대 엣지 그늘값을 임의 시각에 선형 보간한다."""
+    value = float(hour)
+    if value <= HOURS[0]:
+        return float(data.get(f"shade_{HOURS[0]}", 0.0))
+    if value >= HOURS[-1]:
+        return float(data.get(f"shade_{HOURS[-1]}", 0.0))
+    for left, right in zip(HOURS[:-1], HOURS[1:]):
+        if left <= value <= right:
+            fraction = (value - left) / (right - left)
+            low = float(data.get(f"shade_{left}", 0.0))
+            high = float(data.get(f"shade_{right}", 0.0))
+            return low + (high - low) * fraction
+    return 0.0
+
+
+def _shade_weight(hour: int | float, beta: float):
     """그늘 가중치 함수(길이 × (1 + β × (1 - 그늘율)))를 만들어 반환한다."""
 
     def weight(u, v, d):
         # d = {엣지키: 속성dict} — 병렬 엣지 중 비용이 가장 작은 것 사용
         return min(
-            a["length"] * (1 + beta * (1 - float(a.get(f"shade_{hour}", 0.0))))
+            a["length"] * (1 + beta * (1 - _edge_shade(a, hour)))
             for a in d.values()
         )
 
@@ -171,8 +187,28 @@ def route_steps(G: nx.MultiDiGraph, nodes: list) -> list[dict]:
     return steps
 
 
+def route_segments(G: nx.MultiDiGraph, nodes: list, hour: int | float) -> list[dict]:
+    """경로 엣지를 그늘/햇빛 구간으로 병합해 지도 색칠용 좌표를 만든다."""
+    segments: list[dict] = []
+    for u, v in zip(nodes[:-1], nodes[1:]):
+        data = min(G.get_edge_data(u, v).values(), key=lambda item: item["length"])
+        shaded = _edge_shade(data, hour) >= 0.5
+        if "geometry" in data:
+            coords = [[round(lat, 6), round(lon, 6)] for lon, lat in data["geometry"].coords]
+        else:
+            coords = [
+                [round(G.nodes[u]["y"], 6), round(G.nodes[u]["x"], 6)],
+                [round(G.nodes[v]["y"], 6), round(G.nodes[v]["x"], 6)],
+            ]
+        if segments and segments[-1]["shaded"] == shaded:
+            segments[-1]["coords"].extend(coords[1:])
+        else:
+            segments.append({"shaded": shaded, "coords": coords})
+    return segments
+
+
 def route_options(
-    G: nx.MultiDiGraph, start: tuple[float, float], end: tuple[float, float], hour: int
+    G: nx.MultiDiGraph, start: tuple[float, float], end: tuple[float, float], hour: int | float
 ) -> dict:
     """최단경로 + β 스윕으로 얻은 그늘 대안들을 그늘 등급(40/60/80%+)으로 정리한다.
 
@@ -194,6 +230,7 @@ def route_options(
     for nodes in cand:
         stat = route_stat(G, list(nodes), hour)
         stat["steps"] = route_steps(G, list(nodes))
+        stat["segments"] = route_segments(G, list(nodes), hour)
         stat["labels"] = []
         routes.append(stat)
     routes.sort(key=lambda r: r["time_min"])
@@ -215,14 +252,14 @@ def route_options(
     return {"routes": keep, "recommended_idx": keep.index(recommended)}
 
 
-def route_stat(G: nx.MultiDiGraph, nodes: list, hour: int) -> dict:
+def route_stat(G: nx.MultiDiGraph, nodes: list, hour: int | float) -> dict:
     """경로 노드 목록에서 좌표·거리·시간·그늘% 통계를 만든다."""
     dist = 0.0
     shaded = 0.0
     for u, v in zip(nodes[:-1], nodes[1:]):
         data = min(G.get_edge_data(u, v).values(), key=lambda a: a["length"])
         dist += data["length"]
-        shaded += data["length"] * float(data.get(f"shade_{hour}", 0.0))
+        shaded += data["length"] * _edge_shade(data, hour)
     return {
         "coords": [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in nodes],
         "dist_m": round(dist),

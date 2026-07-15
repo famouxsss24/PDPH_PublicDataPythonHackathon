@@ -1,618 +1,254 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>그늘로 — 태양을 피하는 길찾기</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-<style>
-  :root {
-    --ink: #1a2340; --shade: #2f3e7c; --shade-route: #2563eb;
-    --sun: #ff8a3d; --hot: #ef4444; --ok: #059669;
-    --card: rgba(255,255,255,.88); --line: rgba(26,35,64,.12);
-    --radius: 16px;
-    --shadow-lg: 0 12px 40px rgba(26,35,64,.18), 0 2px 8px rgba(26,35,64,.08);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
-  body { font-family: Pretendard, 'Malgun Gothic', sans-serif; color: var(--ink); }
-  #map { position: fixed; inset: 0; background: #eef0e9; }
-  .leaflet-container { font: inherit; }
-
-  .card {
-    background: var(--card);
-    backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4);
-    border: 1px solid rgba(255,255,255,.65); border-radius: var(--radius); box-shadow: var(--shadow-lg);
-  }
-
-  /* ---------- 좌측 컨트롤 ---------- */
-  #ctrl { position: fixed; top: 16px; left: 16px; z-index: 1000; width: 330px; padding: 16px 18px 14px; }
-  #brand { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  #brand .logo {
-    width: 38px; height: 38px; border-radius: 12px; flex: none;
-    background: linear-gradient(140deg, #ffd166 0%, var(--sun) 45%, var(--shade) 46%, #1a2340 100%);
-    display: grid; place-items: center; font-size: 19px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.35);
-  }
-  #brand h1 { font-size: 19px; margin: 0; letter-spacing: -.02em; }
-  #brand small { display: block; font-size: 11.5px; font-weight: 500; color: #6b7396; margin-top: 1px; }
-
-  /* 검색 입력 */
-  .srch { position: relative; margin-bottom: 7px; }
-  .srch .ic { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 13px; }
-  .srch input {
-    width: 100%; padding: 10px 76px 10px 32px; border: 1.5px solid var(--line); border-radius: 11px;
-    font: inherit; font-size: 13.5px; background: #fff; outline: none; transition: border .15s;
-  }
-  .srch input:focus { border-color: var(--shade-route); }
-  .srch .side {
-    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-    border: 0; border-radius: 8px; padding: 5px 9px; cursor: pointer;
-    background: rgba(37,99,235,.09); color: var(--shade-route); font: inherit; font-size: 11.5px; font-weight: 700;
-  }
-  .srch .side:hover { background: rgba(37,99,235,.18); }
-  .drop {
-    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1500;
-    background: #fff; border-radius: 12px; box-shadow: var(--shadow-lg);
-    max-height: 240px; overflow-y: auto; display: none;
-  }
-  .drop .it { padding: 9px 13px; font-size: 13px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
-  .drop .it:hover { background: rgba(37,99,235,.07); }
-  .drop .it .cat { margin-left: auto; font-size: 10.5px; color: #8a90ab; }
-
-  .sec-label { font-size: 11.5px; font-weight: 700; color: #8a90ab; letter-spacing: .06em; margin: 12px 0 6px; }
-  #hours { display: flex; gap: 4px; }
-  #hours button {
-    flex: 1; padding: 7px 0 5px; border: 0; border-radius: 10px; cursor: pointer;
-    background: rgba(26,35,64,.05); color: #59617f; font: inherit; font-size: 13px; font-weight: 600;
-    transition: all .18s ease; line-height: 1.15;
-  }
-  #hours button .sun-ico { display: block; font-size: 13px; }
-  #hours button:hover { background: rgba(26,35,64,.10); }
-  #hours button.on {
-    background: linear-gradient(160deg, var(--sun), #ff6b2c); color: #fff;
-    box-shadow: 0 4px 12px rgba(255,120,50,.4);
-  }
-  #playRow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-  #play {
-    border: 0; border-radius: 10px; cursor: pointer; padding: 7px 12px;
-    background: var(--ink); color: #fff; font: inherit; font-size: 12.5px; font-weight: 600;
-    display: flex; gap: 6px; align-items: center; transition: transform .15s;
-  }
-  #play:hover { transform: translateY(-1px); }
-  #play.playing { background: var(--hot); }
-  #sunmeta { font-size: 11.5px; color: #6b7396; }
-
-  #btnRow { display: flex; gap: 8px; margin-top: 12px; }
-  .tbtn {
-    flex: 1; padding: 8px 0; border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
-    background: #fff; color: #59617f; font: inherit; font-size: 12.5px; font-weight: 600; transition: all .15s;
-  }
-  .tbtn:hover { border-color: #b9bed4; }
-  .tbtn.on { background: var(--shade); border-color: var(--shade); color: #fff; }
-
-  /* ---------- 안내 칩 ---------- */
-  #hint {
-    position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 1000;
-    padding: 9px 18px; border-radius: 999px; font-size: 13.5px; font-weight: 600;
-    display: flex; gap: 8px; align-items: center; white-space: nowrap; transition: opacity .3s;
-  }
-  #hint .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--sun); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
-
-  /* ---------- 우측 결과 패널 ---------- */
-  #panel {
-    position: fixed; top: 16px; right: 16px; bottom: 16px; z-index: 1000;
-    width: 348px; padding: 18px; overflow-y: auto; scrollbar-width: thin; display: none;
-  }
-  #panel.show { display: block; animation: slidein .35s cubic-bezier(.2,.9,.3,1.1); }
-  @keyframes slidein { from { opacity: 0; transform: translateX(28px); } }
-  #panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: center; gap: 7px; }
-  #panel h2 .chip { font-size: 11px; font-weight: 700; background: rgba(26,35,64,.07); color: #59617f; border-radius: 6px; padding: 2px 7px; }
-
-  /* 경로 옵션 리스트 */
-  .opt {
-    border: 1.5px solid var(--line); border-radius: 13px; padding: 11px 13px; margin-bottom: 8px;
-    cursor: pointer; transition: all .15s; background: #fff;
-  }
-  .opt:hover { border-color: #b9bed4; }
-  .opt.sel { border-color: var(--shade-route); background: rgba(37,99,235,.05); box-shadow: 0 3px 12px rgba(37,99,235,.14); }
-  .opt .top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-  .opt .badge { font-size: 10.5px; font-weight: 800; border-radius: 6px; padding: 2px 7px; color: #fff; }
-  .badge.b-short { background: var(--hot); }
-  .badge.b-tier { background: var(--shade); }
-  .badge.b-rec { background: var(--ok); }
-  .opt .time { margin-left: auto; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
-  .opt .time small { font-size: 11px; font-weight: 600; color: #8a90ab; }
-  .opt .meta { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 11.5px; color: #6b7396; }
-  .opt .meta .delta { font-weight: 700; }
-  .opt .meta .delta.plus { color: var(--hot); } .opt .meta .delta.zero { color: var(--ok); }
-  .opt .sbar { flex: 1; height: 6px; border-radius: 3px; background: rgba(26,35,64,.07); overflow: hidden; }
-  .opt .sbar i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #60a5fa, var(--shade-route)); }
-  .opt .spct { font-weight: 800; color: var(--shade-route); min-width: 58px; text-align: right; }
-
-  #verdict {
-    margin: 4px 0 14px; padding: 11px 13px; border-radius: 12px; font-size: 13px; line-height: 1.55;
-    background: linear-gradient(135deg, rgba(37,99,235,.09), rgba(47,62,124,.07));
-    border: 1px solid rgba(37,99,235,.18);
-  }
-  #verdict b { color: var(--shade-route); }
-
-  /* 턴바이턴 */
-  #steps { margin-bottom: 14px; }
-  .step { display: flex; gap: 10px; align-items: center; padding: 7px 4px; font-size: 13px; border-bottom: 1px dashed var(--line); }
-  .step:last-child { border-bottom: 0; }
-  .step .tic {
-    width: 28px; height: 28px; border-radius: 9px; flex: none; display: grid; place-items: center;
-    background: rgba(26,35,64,.06); font-size: 14px;
-  }
-  .step.turnL .tic, .step.turnR .tic { background: rgba(37,99,235,.1); }
-  .step .nm { font-weight: 600; }
-  .step .dst { margin-left: auto; color: #8a90ab; font-size: 12px; font-variant-numeric: tabular-nums; }
-
-  /* 출발시각 차트 */
-  .bar-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; }
-  .bar-row .t { width: 38px; color: #6b7396; font-weight: 600; flex: none; font-variant-numeric: tabular-nums; }
-  .bar-row .track { flex: 1; height: 15px; background: rgba(26,35,64,.05); border-radius: 8px; overflow: hidden; }
-  .bar-row .fill { height: 100%; border-radius: 8px; min-width: 3px; background: linear-gradient(90deg, #ffd166, var(--sun), #ff5c3d); transition: width .5s ease; }
-  .bar-row .v { width: 48px; text-align: right; color: #8a90ab; font-size: 11px; flex: none; font-variant-numeric: tabular-nums; }
-  .bar-row.best .t { color: var(--ok); }
-  .bar-row.best .fill { background: linear-gradient(90deg, #34d399, var(--ok)); }
-  .badge2 { font-size: 10px; font-weight: 800; border-radius: 5px; padding: 1px 5px; color: #fff; margin-left: 4px; }
-  .badge2.rec { background: var(--ok); } .badge2.avoid { background: var(--hot); }
-  #depSummary { font-size: 13px; margin: 8px 0 10px; line-height: 1.6; }
-  #depSummary .best-t { font-size: 17px; font-weight: 800; color: var(--ok); }
-
-  /* ---------- 범례 ---------- */
-  #legend { position: fixed; left: 16px; bottom: 16px; z-index: 1000; padding: 11px 15px; font-size: 12px; line-height: 1.9; }
-  #legend .li { display: flex; align-items: center; gap: 8px; }
-  #legend .sw { width: 22px; height: 8px; border-radius: 4px; flex: none; }
-
-  /* ---------- 마커 ---------- */
-  .pin { position: relative; }
-  .pin .head {
-    width: 30px; height: 30px; border-radius: 50% 50% 50% 4px; transform: rotate(-45deg);
-    display: grid; place-items: center; box-shadow: 0 4px 10px rgba(26,35,64,.35); border: 2.5px solid #fff;
-  }
-  .pin .head span { transform: rotate(45deg); color: #fff; font-size: 11px; font-weight: 800; }
-  .pin.start .head { background: var(--ok); }
-  .pin.end .head { background: var(--hot); }
-
-  /* 내 위치 (파란 점 + 방향 부채꼴) */
-  .me { position: relative; width: 46px; height: 46px; }
-  .me .cone {
-    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
-    border-left: 14px solid transparent; border-right: 14px solid transparent;
-    border-bottom: 26px solid rgba(37,99,235,.30);
-    transform-origin: 50% 100%; transform: translate(-50%, -100%) rotate(var(--hd, 0deg));
-    border-radius: 50%;
-  }
-  .me .dot0 {
-    position: absolute; left: 50%; top: 50%; width: 15px; height: 15px; border-radius: 50%;
-    background: var(--shade-route); border: 3px solid #fff; transform: translate(-50%, -50%);
-    box-shadow: 0 0 0 6px rgba(37,99,235,.18), 0 2px 8px rgba(26,35,64,.4);
-  }
-
-  .shade-path { stroke-dasharray: 13 11; animation: dashmove 1.1s linear infinite; }
-  @keyframes dashmove { to { stroke-dashoffset: -24; } }
-
-  #toast {
-    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 1200;
-    padding: 10px 20px; border-radius: 999px; font-size: 13px; font-weight: 600;
-    background: rgba(26,35,64,.92); color: #fff; display: none;
-  }
-  #toast.err { background: rgba(190,40,40,.94); }
-  .spin {
-    width: 14px; height: 14px; border: 2.5px solid rgba(255,138,61,.3); border-top-color: var(--sun);
-    border-radius: 50%; animation: rot .7s linear infinite; display: inline-block;
-  }
-  @keyframes rot { to { transform: rotate(360deg); } }
-
-  #follow {
-    position: fixed; right: 380px; bottom: 22px; z-index: 1000; display: none;
-    border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer;
-    background: #fff; color: var(--shade-route); font: inherit; font-size: 13px; font-weight: 700;
-    box-shadow: var(--shadow-lg);
-  }
-  #follow.on { background: var(--shade-route); color: #fff; }
-
-  @media (max-width: 900px) {
-    #ctrl { width: calc(100vw - 32px); }
-    #panel { top: auto; right: 8px; left: 8px; bottom: 8px; width: auto; max-height: 48vh; }
-    #hint { top: auto; bottom: 49vh; }
-    #legend, #follow { display: none !important; }
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f6f2">
+  <title>그늘로 - 햇빛을 피해 걷는 길</title>
+  <link rel="preconnect" href="https://tiles.openfreemap.org">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="./css/tokens.css">
+  <link rel="stylesheet" href="./css/layout.css">
+  <link rel="stylesheet" href="./css/components.css">
 </head>
-<body>
-<div id="map"></div>
+<body data-phase="search">
+  <main class="app-shell">
+    <div id="map" class="map-canvas" aria-label="노원구 그늘 경로 지도"></div>
 
-<!-- 좌측 컨트롤 -->
-<div id="ctrl" class="card">
-  <div id="brand">
-    <div class="logo">⛱️</div>
-    <div><h1>그늘로</h1><small>노원구 · 태양을 피하는 길찾기</small></div>
-  </div>
+    <aside id="journeyPanel" class="journey-panel" aria-label="경로 검색과 비교">
+      <header class="panel-header">
+        <a class="brand" href="./" aria-label="그늘로 처음으로">
+          <span class="brand-mark" aria-hidden="true"><i data-lucide="route"></i></span>
+          <span><strong>그늘로</strong><small>NOWON SHADE NAVI</small></span>
+        </a>
+        <span class="data-badge">8월 6일 시뮬레이션</span>
+      </header>
 
-  <div class="srch">
-    <span class="ic">🟢</span>
-    <input id="inFrom" placeholder="출발지 검색 (역·동·학교·아파트)" autocomplete="off">
-    <button class="side" id="btnMe">📍 내 위치</button>
-    <div class="drop" id="dropFrom"></div>
-  </div>
-  <div class="srch">
-    <span class="ic">🔴</span>
-    <input id="inTo" placeholder="도착지 검색 또는 지도 클릭" autocomplete="off">
-    <button class="side" id="btnSwap">⇅</button>
-    <div class="drop" id="dropTo"></div>
-  </div>
+      <form id="routePlanner" class="route-editor" autocomplete="off">
+        <span class="endpoint-track" aria-hidden="true"></span>
 
-  <div class="sec-label">시간대 (8월 6일 기준)</div>
-  <div id="hours"></div>
-  <div id="playRow">
-    <button id="play">▶ 그림자 타임랩스</button>
-    <span id="sunmeta"></span>
-  </div>
+        <label class="place-field is-origin" for="originQuery">
+          <span class="field-dot" aria-hidden="true"></span>
+          <span class="field-copy">
+            <small>출발</small>
+            <input id="originQuery" name="origin" type="search" placeholder="출발지 검색" aria-autocomplete="list" aria-controls="searchResults">
+          </span>
+          <button id="clearOrigin" class="icon-button field-clear" type="button" aria-label="출발지 지우기" title="출발지 지우기" hidden>
+            <i data-lucide="x"></i>
+          </button>
+          <button id="pickOriginButton" class="icon-button field-pick" type="button" aria-label="지도에서 출발지 지정" title="지도에서 출발지 지정">
+            <i data-lucide="crosshair"></i>
+          </button>
+        </label>
 
-  <div id="btnRow">
-    <button class="tbtn on" id="tglShadow">🌑 그림자</button>
-    <button class="tbtn" id="tglGrid">🔳 그늘율</button>
-    <button class="tbtn" id="btnReset">↺ 초기화</button>
-  </div>
-</div>
+        <label class="place-field is-destination" for="destinationQuery">
+          <span class="field-dot" aria-hidden="true"></span>
+          <span class="field-copy">
+            <small>도착</small>
+            <input id="destinationQuery" name="destination" type="search" placeholder="건물, 상호, 주소 검색" aria-autocomplete="list" aria-controls="searchResults">
+          </span>
+          <button id="clearDestination" class="icon-button field-clear" type="button" aria-label="도착지 지우기" title="도착지 지우기" hidden>
+            <i data-lucide="x"></i>
+          </button>
+          <button id="pickDestinationButton" class="icon-button field-pick" type="button" aria-label="지도에서 도착지 지정" title="지도에서 도착지 지정">
+            <i data-lucide="map-pin"></i>
+          </button>
+        </label>
 
-<div id="hint" class="card"><span class="dot"></span><span id="hintText">출발지를 검색하거나 지도를 클릭하세요</span></div>
+        <div id="routeEditorActions" class="route-editor-actions">
+          <button id="resetRouteInput" class="editor-command" type="button">
+            <i data-lucide="rotate-ccw"></i><span>다시 입력</span>
+          </button>
+          <button id="swapRoute" class="editor-command is-swap" type="button">
+            <i data-lucide="arrow-up-down"></i><span>출발·도착 바꾸기</span>
+          </button>
+        </div>
+      </form>
 
-<!-- 우측 결과 패널 -->
-<div id="panel" class="card">
-  <h2>🧭 경로 선택 <span class="chip" id="metaChip"></span>
-    <a id="btn3d" href="#" target="_blank" style="margin-left:auto;font-size:11.5px;font-weight:700;
-      background:linear-gradient(135deg,#2563eb,#6d5bd0);color:#fff;border-radius:8px;
-      padding:4px 10px;text-decoration:none">🏙️ 3D 근거</a></h2>
-  <div id="optList"></div>
-  <div id="verdict"></div>
+      <div id="searchResults" class="search-results" role="listbox" aria-label="장소 검색 결과" hidden></div>
 
-  <h2>👣 길 안내</h2>
-  <div id="steps"></div>
+      <div class="panel-stage">
+        <section id="searchStage" class="search-stage phase-view" aria-label="목적지 추천">
+          <div class="search-heading">
+            <p class="eyebrow">빠른 선택</p>
+            <h1>어디로 걸어갈까요?</h1>
+          </div>
+          <div id="searchSuggestions" class="search-suggestions" aria-label="추천 장소"></div>
+          <p id="plannerHint" class="planner-hint">
+            <i data-lucide="search"></i>
+            <span>노원구 장소, 건물, 주소를 검색하세요.</span>
+          </p>
+        </section>
 
-  <h2>🕑 언제 출발할까?</h2>
-  <div id="depSummary"></div>
-  <div id="depChart"></div>
-</div>
+        <aside id="routeSheet" class="route-sheet phase-view" data-snap="half" aria-label="경로 비교">
+          <button id="sheetHandle" class="sheet-handle" type="button" aria-label="경로 정보 패널 높이 변경">
+            <span aria-hidden="true"></span>
+          </button>
 
-<div id="legend" class="card">
-  <div class="li"><span class="sw" style="background:rgba(47,62,124,.55)"></span>건물·가로수 그림자</div>
-  <div class="li"><span class="sw" style="background:linear-gradient(90deg,#f97316,#ef4444)"></span>최단 경로</div>
-  <div class="li"><span class="sw" style="background:linear-gradient(90deg,#3b82f6,#1d4ed8)"></span>선택한 그늘 경로</div>
-</div>
+          <div id="loadingView" class="sheet-loading" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <strong>경로를 비교하고 있어요</strong>
+            <small>거리와 시간대별 그늘 구간을 계산합니다.</small>
+          </div>
 
-<button id="follow">🧭 따라가기</button>
-<div id="toast"></div>
+          <div id="compareView" class="sheet-content compare-view">
+            <div class="sheet-toolbar">
+              <div>
+                <p class="eyebrow">경로 선택</p>
+                <h1 id="routeHeading">도착지까지</h1>
+              </div>
+              <div class="time-controls">
+                <button id="departTimeButton" class="time-button" type="button" aria-haspopup="dialog">
+                  <i data-lucide="clock-3"></i>
+                  <span id="departTimeLabel">지금 출발</span>
+                  <i data-lucide="chevron-down"></i>
+                </button>
+                <button id="bestTimeButton" class="best-time-button" type="button" hidden>추천 출발 <span>17:00</span></button>
+              </div>
+            </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-'use strict';
-/* ==================== 상태 ==================== */
-const HOURS = [10, 13, 14, 15, 17];
-const SUN_ICON = { 10: '🌤️', 13: '☀️', 14: '☀️', 15: '🌞', 17: '🌇' };
-const SUN_DESC = { 10: '해가 동남쪽, 그림자 김', 13: '해가 가장 높음', 14: '한낮 · 자외선 최고',
-                   15: '오후 볕 강함', 17: '해가 서쪽, 그림자 김' };
-const TURN_ICON = { '출발': '🟢', '직진': '⬆️', '좌회전': '⬅️', '우회전': '➡️', '유턴': '🔄' };
-let state = {
-  hour: 14, from: null, to: null,       // from/to = {lat, lon, label}
-  routes: [], selIdx: -1,
-  showShadow: true, showGrid: false, playing: null,
-  watchId: null, follow: false, heading: 0,
-};
-let layers = { shadow: null, grid: null, routes: [], markers: [], me: null };
-const $ = id => document.getElementById(id);
+            <div id="nightNotice" class="notice" hidden>
+              <i data-lucide="moon"></i>
+              <span>밤에는 최단 경로를 안내합니다.</span>
+            </div>
 
-/* ==================== 지도 ==================== */
-const map = L.map('map', { zoomControl: false }).setView([37.6195, 127.0596], 15);
-L.control.zoom({ position: 'bottomright' }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
-}).addTo(map);
+            <div id="routeOptions" class="route-options" role="radiogroup" aria-label="경로 옵션"></div>
+            <div id="routeInsight" class="route-insight" aria-live="polite"></div>
 
-/* ==================== 유틸 ==================== */
-function toast(msg, isErr = false, ms = 2600) {
-  const t = $('toast');
-  t.textContent = msg; t.className = isErr ? 'err' : ''; t.style.display = 'block';
-  clearTimeout(t._tm); t._tm = setTimeout(() => t.style.display = 'none', ms);
-}
-async function getJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) {
-    let detail = '요청 실패 (' + res.status + ')';
-    try { detail = (await res.json()).detail || detail; } catch (e) { /* 무시 */ }
-    throw new Error(detail);
-  }
-  return res.json();
-}
-const fmtMin = m => m >= 60 ? `${Math.floor(m / 60)}시간 ${Math.round(m % 60)}분` : `${m.toFixed(1)}분`;
-const fmtDist = d => d >= 1000 ? (d / 1000).toFixed(2) + 'km' : Math.round(d) + 'm';
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-/* ==================== 그림자/격자 레이어 ==================== */
-const shadeCache = {}, gridCache = {};
-async function loadShadow() {
-  if (!state.showShadow) { if (layers.shadow) map.removeLayer(layers.shadow); layers.shadow = null; return; }
-  try {
-    if (!shadeCache[state.hour]) shadeCache[state.hour] = await getJSON('/api/shade?hour=' + state.hour);
-    if (layers.shadow) map.removeLayer(layers.shadow);
-    layers.shadow = L.geoJSON(shadeCache[state.hour], {
-      style: { color: '#2f3e7c', weight: 0, fillColor: '#2f3e7c', fillOpacity: 0.4 }, interactive: false,
-    }).addTo(map);
-    if (layers.shadow.bringToBack) layers.shadow.bringToBack();
-  } catch (e) { toast('그림자 데이터를 불러오지 못했습니다: ' + e.message, true); }
-}
-function gridColor(r) {
-  if (r < 0.15) return { fill: '#ff8a3d', op: 0.10 };
-  if (r < 0.35) return { fill: '#8d7bb8', op: 0.22 };
-  if (r < 0.60) return { fill: '#4c5aa8', op: 0.34 };
-  return { fill: '#1e2b58', op: 0.48 };
-}
-async function loadGrid() {
-  if (layers.grid) { map.removeLayer(layers.grid); layers.grid = null; }
-  if (!state.showGrid) return;
-  try {
-    if (!gridCache[state.hour]) gridCache[state.hour] = await getJSON('/api/grid?hour=' + state.hour);
-    const key = 'shade_' + state.hour;
-    layers.grid = L.geoJSON(gridCache[state.hour], {
-      style: f => { const c = gridColor(f.properties[key] || 0); return { weight: 0, fillColor: c.fill, fillOpacity: c.op }; },
-      onEachFeature: (f, ly) => ly.bindTooltip(`그늘율 ${Math.round((f.properties[key] || 0) * 100)}%`, { sticky: true, direction: 'top' }),
-    }).addTo(map);
-  } catch (e) { toast('격자 데이터를 불러오지 못했습니다: ' + e.message, true); }
-}
-
-/* ==================== 장소 검색 (자동완성) ==================== */
-function bindSearch(inputId, dropId, onPick) {
-  const inp = $(inputId), drop = $(dropId);
-  let tm = null;
-  inp.addEventListener('input', () => {
-    clearTimeout(tm);
-    const q = inp.value.trim();
-    if (q.length < 1) { drop.style.display = 'none'; return; }
-    tm = setTimeout(async () => {
-      try {
-        const d = await getJSON('/api/places?q=' + encodeURIComponent(q));
-        if (!d.results.length) { drop.style.display = 'none'; return; }
-        drop.innerHTML = d.results.map((r, i) =>
-          `<div class="it" data-i="${i}">${r.icon} <b>${esc(r.name)}</b><span class="cat">${r.cat}</span></div>`).join('');
-        drop.style.display = 'block';
-        drop.querySelectorAll('.it').forEach(el => el.onclick = () => {
-          const r = d.results[+el.dataset.i];
-          inp.value = r.name; drop.style.display = 'none';
-          onPick({ lat: r.lat, lon: r.lon, label: r.name });
-        });
-      } catch (e) { drop.style.display = 'none'; }
-    }, 180);
-  });
-  document.addEventListener('click', e => { if (!drop.contains(e.target) && e.target !== inp) drop.style.display = 'none'; });
-}
-bindSearch('inFrom', 'dropFrom', p => setPoint('from', p));
-bindSearch('inTo', 'dropTo', p => setPoint('to', p));
-
-/* ==================== 출발/도착 설정 ==================== */
-function makePin(kind, label) {
-  return L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 28],
-    html: `<div class="pin ${kind}"><div class="head"><span>${label}</span></div></div>` });
-}
-function redrawEndpoints() {
-  layers.markers.forEach(m => map.removeLayer(m)); layers.markers = [];
-  if (state.from) layers.markers.push(L.marker([state.from.lat, state.from.lon], { icon: makePin('start', '출') }).addTo(map));
-  if (state.to) layers.markers.push(L.marker([state.to.lat, state.to.lon], { icon: makePin('end', '도') }).addTo(map));
-}
-function setPoint(which, p) {
-  state[which] = p;
-  $(which === 'from' ? 'inFrom' : 'inTo').value = p.label;
-  redrawEndpoints();
-  if (state.from && state.to) fetchRoutes();
-  else $('hintText').textContent = state.from ? '도착지를 정하세요' : '출발지를 정하세요';
-}
-map.on('click', e => {
-  const p = { lat: e.latlng.lat, lon: e.latlng.lng, label: '지도에서 선택한 지점' };
-  if (!state.from) setPoint('from', p);
-  else if (!state.to) setPoint('to', p);
-  else { resetAll(); setPoint('from', p); }
-});
-$('btnSwap').onclick = () => {
-  if (!state.from && !state.to) return;
-  [state.from, state.to] = [state.to, state.from];
-  $('inFrom').value = state.from ? state.from.label : '';
-  $('inTo').value = state.to ? state.to.label : '';
-  redrawEndpoints();
-  if (state.from && state.to) fetchRoutes();
-};
-
-/* ==================== 내 위치 ==================== */
-function ensureWatch() {
-  if (state.watchId !== null) return;
-  if (!navigator.geolocation) { toast('이 브라우저는 위치 기능을 지원하지 않습니다.', true); return; }
-  state.watchId = navigator.geolocation.watchPosition(pos => {
-    const { latitude: lat, longitude: lon, heading } = pos.coords;
-    if (typeof heading === 'number' && !isNaN(heading)) state.heading = heading;
-    if (!layers.me) {
-      layers.me = L.marker([lat, lon], { interactive: false, zIndexOffset: 900,
-        icon: L.divIcon({ className: '', iconSize: [46, 46], iconAnchor: [23, 23],
-          html: `<div class="me"><div class="cone"></div><div class="dot0"></div></div>` }) }).addTo(map);
-      $('follow').style.display = 'block';
-    } else layers.me.setLatLng([lat, lon]);
-    const cone = layers.me.getElement()?.querySelector('.cone');
-    if (cone) cone.style.setProperty('--hd', state.heading + 'deg');
-    if (state.follow) map.setView([lat, lon], Math.max(map.getZoom(), 16));
-    if (state.from && state.from.label === '내 위치') {
-      state.from.lat = lat; state.from.lon = lon; // 이동 시 출발점 따라감 (재검색은 안 함)
-      redrawEndpoints();
-    }
-  }, err => toast('위치를 가져오지 못했습니다: ' + err.message, true), { enableHighAccuracy: true });
-}
-window.addEventListener('deviceorientationabsolute', e => {
-  if (e.alpha !== null && layers.me) {
-    state.heading = 360 - e.alpha;
-    const cone = layers.me.getElement()?.querySelector('.cone');
-    if (cone) cone.style.setProperty('--hd', state.heading + 'deg');
-  }
-});
-$('btnMe').onclick = () => {
-  if (!navigator.geolocation) { toast('이 브라우저는 위치 기능을 지원하지 않습니다.', true); return; }
-  navigator.geolocation.getCurrentPosition(pos => {
-    ensureWatch();
-    setPoint('from', { lat: pos.coords.latitude, lon: pos.coords.longitude, label: '내 위치' });
-    map.setView([pos.coords.latitude, pos.coords.longitude], 16);
-  }, err => toast('위치 권한을 확인해주세요: ' + err.message, true), { enableHighAccuracy: true });
-};
-$('follow').onclick = () => { state.follow = !state.follow; $('follow').classList.toggle('on', state.follow); };
-
-/* ==================== 경로 (그늘 등급별) ==================== */
-function clearRoutes() { layers.routes.forEach(l => map.removeLayer(l)); layers.routes = []; }
-function drawSelected() {
-  clearRoutes();
-  const sel = state.routes[state.selIdx];
-  if (!sel) return;
-  const shortest = state.routes.find(r => r.labels.includes('최단'));
-  if (shortest && shortest !== sel) {  // 비교용 최단 경로(빨간 점선)를 아래 깔기
-    layers.routes.push(L.polyline(shortest.coords, { color: '#ef4444', weight: 4, opacity: 0.6, dashArray: '2 7', lineCap: 'round' }).addTo(map));
-  }
-  const color = sel.labels.includes('최단') && sel.shade_pct < 40 ? '#ef4444' : '#2563eb';
-  layers.routes.push(L.polyline(sel.coords, { color: '#ffffff', weight: 10, opacity: 0.9, lineCap: 'round' }).addTo(map));
-  layers.routes.push(L.polyline(sel.coords, { color, weight: 6, opacity: 0.95, lineCap: 'round', className: 'shade-path' }).addTo(map));
-  map.fitBounds(L.latLngBounds(sel.coords), { paddingTopLeft: [370, 40], paddingBottomRight: [380, 40] });
-}
-function badgeHTML(label) {
-  const cls = label === '최단' ? 'b-short' : label === '추천' ? 'b-rec' : 'b-tier';
-  return `<span class="badge ${cls}">${label}</span>`;
-}
-function renderOptions() {
-  $('optList').innerHTML = state.routes.map((r, i) => `
-    <div class="opt${i === state.selIdx ? ' sel' : ''}" data-i="${i}">
-      <div class="top">${r.labels.map(badgeHTML).join('')}
-        <span class="time">${fmtMin(r.time_min)} <small>${fmtDist(r.dist_m)}</small></span></div>
-      <div class="meta">
-        <span class="delta ${r.delta_min > 0 ? 'plus' : 'zero'}">${r.delta_min > 0 ? '+' + fmtMin(r.delta_min) : '기준'}</span>
-        <div class="sbar"><i style="width:${r.shade_pct}%"></i></div>
-        <span class="spct">그늘 ${r.shade_pct}%</span>
+            <div class="sheet-footer">
+              <a id="open3d" class="secondary-command" href="./3d.html" target="_blank" rel="noreferrer">
+                <i data-lucide="boxes"></i><span>3D 보기</span>
+              </a>
+              <button id="startNavigation" class="primary-command" type="button">
+                <i data-lucide="navigation"></i><span>추천 경로로 안내</span>
+              </button>
+            </div>
+          </div>
+        </aside>
       </div>
-    </div>`).join('');
-  $('optList').querySelectorAll('.opt').forEach(el => el.onclick = () => {
-    state.selIdx = +el.dataset.i;
-    renderOptions(); renderSteps(); drawSelected();
-  });
-}
-function renderSteps() {
-  const sel = state.routes[state.selIdx];
-  if (!sel) { $('steps').innerHTML = ''; return; }
-  const rows = sel.steps.map(s => {
-    const cls = s.turn === '좌회전' ? 'turnL' : s.turn === '우회전' ? 'turnR' : '';
-    return `<div class="step ${cls}"><div class="tic">${TURN_ICON[s.turn] || '⬆️'}</div>
-      <span class="nm">${s.turn === '직진' || s.turn === '출발' ? esc(s.name) + ' 따라' : esc(s.name) + '(으)로 ' + s.turn}</span>
-      <span class="dst">${fmtDist(s.dist_m)}</span></div>`;
-  });
-  rows.push(`<div class="step"><div class="tic">🏁</div><span class="nm">도착</span></div>`);
-  $('steps').innerHTML = rows.join('');
-}
-function renderVerdict() {
-  const rec = state.routes[state.selIdx], shortest = state.routes.find(r => r.labels.includes('최단'));
-  if (!rec || !shortest) { $('verdict').innerHTML = ''; return; }
-  const dShade = rec.shade_pct - shortest.shade_pct, dTime = rec.delta_min;
-  let msg;
-  if (rec === shortest) msg = '최단 경로가 이미 이 구간의 최선이에요.';
-  else if (dTime <= 0.5) msg = `시간 손해 거의 없이 그늘을 <b>+${dShade}%p</b> 더 누릴 수 있어요.`;
-  else msg = `<b>${fmtMin(dTime)}</b>만 더 걸으면 그늘이 <b>${shortest.shade_pct}% → ${rec.shade_pct}%</b>로 늘어요.`;
-  $('verdict').innerHTML = '💡 ' + msg;
-}
-async function fetchRoutes() {
-  const qs = `start_lat=${state.from.lat}&start_lon=${state.from.lon}&end_lat=${state.to.lat}&end_lon=${state.to.lon}`;
-  $('hintText').innerHTML = '<span class="spin"></span> 경로 계산 중…';
-  try {
-    const d = await getJSON(`/api/routes?${qs}&hour=${state.hour}`);
-    state.routes = d.routes; state.selIdx = d.recommended_idx;
-    $('panel').classList.add('show');
-    $('metaChip').textContent = `${d.hour}시 기준`;
-    $('btn3d').href = `/3d.html?from=${state.from.lat},${state.from.lon}&to=${state.to.lat},${state.to.lon}&hour=${state.hour}`;
-    renderOptions(); renderVerdict(); renderSteps(); drawSelected();
-    $('hint').style.opacity = 0;
-    loadDeparture(qs);
-  } catch (e) { toast(e.message || '경로 계산에 실패했습니다.', true); }
-}
+    </aside>
 
-/* ==================== 출발 시각 추천 ==================== */
-async function loadDeparture(qs) {
-  $('depSummary').innerHTML = '<span class="spin"></span> 시간대별 햇빛 노출 계산 중…';
-  $('depChart').innerHTML = '';
-  try {
-    const d = await getJSON('/api/departure?' + qs);
-    $('depSummary').innerHTML =
-      `<span class="best-t">${d.best.t}</span> 출발이 최선 (노출 <b>${d.best.exposure_m}m</b>) · ` +
-      `<span style="color:#b23">${d.worst.t}</span>는 ${d.worst.exposure_m}m로 최악`;
-    const shown = d.curve.filter(c => c.t.endsWith(':00') || c.t.endsWith(':30'));
-    const maxE = Math.max(...shown.map(c => c.exposure_m), 1);
-    const minE = Math.min(...shown.map(c => c.exposure_m));
-    let bestMarked = false, worstMarked = false, html = '';
-    for (const c of shown) {
-      const isBest = !bestMarked && c.exposure_m === minE && (bestMarked = true);
-      const isWorst = !worstMarked && c.exposure_m === maxE && (worstMarked = true);
-      html += `<div class="bar-row${isBest ? ' best' : ''}"><span class="t">${c.t}</span>` +
-        `<div class="track"><div class="fill" style="width:${Math.round(c.exposure_m / maxE * 100)}%"></div></div>` +
-        `<span class="v">${c.exposure_m}m</span>` +
-        (isBest ? '<span class="badge2 rec">추천</span>' : isWorst ? '<span class="badge2 avoid">피하기</span>' : '') + `</div>`;
-    }
-    $('depChart').innerHTML = html;
-  } catch (e) { $('depSummary').innerHTML = '⚠️ 출발시각 추천 실패: ' + e.message; }
-}
+    <nav class="map-tools" aria-label="지도 도구">
+      <button id="locateButton" class="map-tool" type="button" aria-label="내 위치로 이동" title="내 위치로 이동">
+        <i data-lucide="locate-fixed"></i><span>내 위치</span>
+      </button>
+      <button id="shadowExploreButton" class="map-tool is-shadow" type="button" aria-expanded="false" aria-controls="shadowExplorer" title="시간별 그림자">
+        <i data-lucide="sun-medium"></i><span>그림자</span>
+      </button>
+      <a id="open3dGlobal" class="map-tool" href="./3d.html" target="_blank" rel="noreferrer" title="3D 지도 열기">
+        <i data-lucide="boxes"></i><span>3D</span>
+      </a>
+      <button id="themeToggle" class="map-tool" type="button" aria-label="다크 모드로 전환" aria-pressed="false" title="다크 모드로 전환">
+        <i data-lucide="moon"></i><span>다크</span>
+      </button>
+    </nav>
 
-/* ==================== 시간대/타임랩스/토글 ==================== */
-function setHour(h, fromPlay = false) {
-  state.hour = h;
-  document.querySelectorAll('#hours button').forEach(b => b.classList.toggle('on', +b.dataset.h === h));
-  $('sunmeta').textContent = SUN_DESC[h];
-  loadShadow(); loadGrid();
-  if (!fromPlay && state.from && state.to) fetchRoutes();
-}
-HOURS.forEach(h => {
-  const b = document.createElement('button');
-  b.dataset.h = h;
-  b.innerHTML = `<span class="sun-ico">${SUN_ICON[h]}</span>${h}시`;
-  b.onclick = () => { stopPlay(); setHour(h); };
-  $('hours').appendChild(b);
-});
-function stopPlay() {
-  if (state.playing) { clearInterval(state.playing); state.playing = null; }
-  $('play').classList.remove('playing'); $('play').textContent = '▶ 그림자 타임랩스';
-}
-$('play').onclick = () => {
-  if (state.playing) { stopPlay(); return; }
-  $('play').classList.add('playing'); $('play').textContent = '⏸ 정지';
-  let i = HOURS.indexOf(state.hour);
-  state.playing = setInterval(() => { i = (i + 1) % HOURS.length; setHour(HOURS[i], true); }, 1400);
-};
-$('tglShadow').onclick = () => { state.showShadow = !state.showShadow; $('tglShadow').classList.toggle('on', state.showShadow); loadShadow(); };
-$('tglGrid').onclick = () => { state.showGrid = !state.showGrid; $('tglGrid').classList.toggle('on', state.showGrid); loadGrid(); };
+    <section id="shadowExplorer" class="shadow-explorer" aria-label="시간별 그림자" hidden>
+      <header>
+        <div>
+          <p class="eyebrow">건물 높이 기반 그림자</p>
+          <strong id="shadowClock">14:00</strong>
+        </div>
+        <div class="shadow-actions">
+          <button id="shadowPlay" class="icon-button" type="button" aria-label="그림자 시간 재생" aria-pressed="false">
+            <i data-lucide="play"></i>
+          </button>
+          <button id="shadowClose" class="icon-button" type="button" aria-label="그림자 시간 닫기">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </header>
+      <input id="shadowRange" type="range" min="7" max="18" step="1" value="14" aria-label="그림자 시각">
+      <div class="shadow-ticks" aria-hidden="true"><span>07</span><span>12</span><span>18</span></div>
+      <p>8월 6일 태양 위치와 건물 높이로 계산한 시간별 그림자</p>
+    </section>
 
-function resetAll() {
-  state.from = state.to = null; state.routes = []; state.selIdx = -1;
-  $('inFrom').value = ''; $('inTo').value = '';
-  layers.markers.forEach(m => map.removeLayer(m)); layers.markers = [];
-  clearRoutes();
-  $('panel').classList.remove('show');
-  $('hint').style.opacity = 1;
-  $('hintText').textContent = '출발지를 검색하거나 지도를 클릭하세요';
-}
-$('btnReset').onclick = resetAll;
+    <div id="routeLegend" class="route-legend" hidden>
+      <span><i class="legend-line is-shade"></i>그늘</span>
+      <span><i class="legend-line is-sun"></i>햇빛</span>
+    </div>
 
-/* ==================== 시작 ==================== */
-setHour(14);
+    <section id="navigationView" class="navigation-hud" aria-label="도보 길찾기" hidden>
+      <div class="navigation-topbar">
+        <button id="backToRoutes" class="icon-button on-dark" type="button" aria-label="경로 비교로 돌아가기">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <span id="navigationMode" class="navigation-mode">경로 미리보기</span>
+        <div class="navigation-actions">
+          <button id="recenterNavigation" class="icon-button on-dark" type="button" aria-label="현재 안내 위치로 이동" title="안내 위치로 이동">
+            <i data-lucide="focus"></i>
+          </button>
+          <button id="voiceToggle" class="icon-button on-dark" type="button" aria-label="음성 안내 켜기" aria-pressed="false">
+            <i data-lucide="volume-2"></i>
+          </button>
+        </div>
+      </div>
 
-/* 공유 링크: ?from=lat,lon&to=lat,lon */
-(function autoRouteFromURL() {
-  const qp = new URLSearchParams(location.search);
-  const parse = s => { const [a, b] = (s || '').split(',').map(Number); return isFinite(a) && isFinite(b) ? { lat: a, lon: b } : null; };
-  const f = parse(qp.get('from')), t = parse(qp.get('to'));
-  if (!f || !t) return;
-  state.from = { ...f, label: '공유된 출발지' }; $('inFrom').value = state.from.label;
-  state.to = { ...t, label: '공유된 도착지' }; $('inTo').value = state.to.label;
-  redrawEndpoints(); fetchRoutes();
-})();
-</script>
+      <div id="nextTurn" class="next-turn"></div>
+
+      <div class="navigation-bottom">
+        <div class="navigation-destination">
+          <span>
+            <small>도착지</small>
+            <strong id="navigationDestination">목적지</strong>
+          </span>
+          <strong id="navigationProgress">남은 0m · 0분</strong>
+        </div>
+        <div class="navigation-progress-track" aria-hidden="true"><span id="navigationProgressBar"></span></div>
+        <div class="navigation-bottom-actions">
+          <button id="previewToggle" class="secondary-command" type="button">
+            <i data-lucide="pause"></i><span>미리보기 정지</span>
+          </button>
+          <details class="steps-disclosure">
+            <summary>전체 경로</summary>
+            <ol id="stepList" class="step-list"></ol>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <dialog id="timeDialog" class="time-dialog" aria-labelledby="timeDialogTitle">
+    <form method="dialog" class="time-dialog-card">
+      <header>
+        <div>
+          <p class="eyebrow">햇빛 노출 기준</p>
+          <h2 id="timeDialogTitle">출발 시간</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="출발 시간 닫기"><i data-lucide="x"></i></button>
+      </header>
+      <div id="exposureChart" class="exposure-chart" aria-label="시간대별 햇빛 노출 곡선"></div>
+      <div class="time-presets">
+        <button id="nowTimeChoice" class="time-preset" type="button" aria-pressed="false">
+          <i data-lucide="navigation"></i><span>지금 출발</span>
+        </button>
+        <button id="recommendedTimeChoice" class="time-preset is-recommended" type="button" hidden>
+          <i data-lucide="sparkles"></i><span>추천 시간</span><strong>17:00</strong>
+        </button>
+      </div>
+      <div class="time-wheel" role="group" aria-label="출발 시각 선택">
+        <div class="wheel-column">
+          <button class="wheel-step" type="button" data-wheel="hour" data-step="-1" aria-label="한 시간 앞당기기"><i data-lucide="chevron-up"></i></button>
+          <div id="hourWheel" class="wheel-scroll" role="listbox" aria-label="시 선택"></div>
+          <button class="wheel-step" type="button" data-wheel="hour" data-step="1" aria-label="한 시간 늦추기"><i data-lucide="chevron-down"></i></button>
+        </div>
+        <span class="wheel-colon" aria-hidden="true">:</span>
+        <div class="wheel-column">
+          <button class="wheel-step" type="button" data-wheel="minute" data-step="-1" aria-label="5분 앞당기기"><i data-lucide="chevron-up"></i></button>
+          <div id="minuteWheel" class="wheel-scroll" role="listbox" aria-label="분 선택"></div>
+          <button class="wheel-step" type="button" data-wheel="minute" data-step="1" aria-label="5분 늦추기"><i data-lucide="chevron-down"></i></button>
+        </div>
+        <span class="wheel-selection" aria-hidden="true"></span>
+      </div>
+      <p id="selectedTimeSummary" class="selected-time-summary">출발 시각을 선택하세요.</p>
+      <button id="confirmTime" class="primary-command dialog-confirm" value="default" type="button">이 시간으로 경로 보기</button>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script type="module" src="./js/app.js?v=20260715b"></script>
 </body>
 </html>

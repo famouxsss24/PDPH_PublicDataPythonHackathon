@@ -11,42 +11,68 @@ from gneulro.io_utils import LAT_CANDIDATES, LON_CANDIDATES, find_col, read_csv_
 
 TEMP_MIN, TEMP_MAX = -40.0, 50.0  # 이 범위 밖 기온은 이상치로 제거
 MAX_MISSING_RATE = 0.5  # 결측률 50% 이상 센서 제외
-SERIAL_CANDIDATES = ["시리얼", "시리얼번호", "serial", "SERIAL_NO", "모델시리얼", "기기일련번호"]
-TEMP_CANDIDATES = ["기온", "온도", "temp", "기온(℃)", "온도평균"]
-TIME_CANDIDATES = ["측정시간", "전송시간", "등록일시", "측정일시", "date", "전송시간(측정시간)"]
+SERIAL_CANDIDATES = [
+    "시리얼", "시리얼번호", "serial", "SERIAL_NO", "모델시리얼", "모델 시리얼(*)", "기기일련번호",
+]
+TEMP_CANDIDATES = ["평균 기온", "기온", "온도", "temp", "기온(℃)", "온도평균"]
+TIME_CANDIDATES = [
+    "센서 시간", "측정시간", "전송시간", "등록일시", "측정일시", "date", "전송시간(측정시간)",
+]
 
 
 def load_sdot(sdot_dir: Path) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
-    """sdot 폴더 CSV들을 센서 위치(GeoDataFrame)와 기온 측정값(DataFrame)으로 나눠 읽는다."""
+    """S-DoT 위치 XLSX와 측정 CSV를 필요한 열만 읽어 표준 형태로 바꾼다."""
     sensors = None
     readings = []
-    files = sorted(sdot_dir.glob("*.csv"))
+    files = sorted([*sdot_dir.glob("*.csv"), *sdot_dir.glob("*.xlsx")])
     if not files:
-        raise FileNotFoundError(f"{sdot_dir}에 S-DoT CSV가 없습니다 (SPEC §3 참고).")
+        raise FileNotFoundError(f"{sdot_dir}에 S-DoT CSV/XLSX가 없습니다 (SPEC §3 참고).")
     for path in files:
-        df = read_csv_kr(path)
-        temp_col = find_col(df, TEMP_CANDIDATES)
-        lat_col = find_col(df, LAT_CANDIDATES)
+        header = (
+            pd.read_excel(path, nrows=0)
+            if path.suffix.lower() == ".xlsx"
+            else read_csv_kr(path, nrows=0)
+        )
+        temp_col = find_col(header, TEMP_CANDIDATES)
+        lat_col = find_col(header, LAT_CANDIDATES)
         if lat_col and temp_col is None:  # 위경도만 있으면 센서 목록 파일
-            lon_col = find_col(df, LON_CANDIDATES)
-            serial_col = find_col(df, SERIAL_CANDIDATES)
+            lon_col = find_col(header, LON_CANDIDATES)
+            serial_col = find_col(header, SERIAL_CANDIDATES)
             if lon_col is None or serial_col is None:
-                raise ValueError(f"{path.name}: 센서목록 컬럼 인식 실패. 실제: {list(df.columns)}")
+                raise ValueError(f"{path.name}: 센서목록 컬럼 인식 실패. 실제: {list(header.columns)}")
+            usecols = [serial_col, lat_col, lon_col]
+            df = (
+                pd.read_excel(path, usecols=usecols)
+                if path.suffix.lower() == ".xlsx"
+                else read_csv_kr(path, usecols=usecols)
+            )
+            latitudes = pd.to_numeric(df[lat_col], errors="coerce")
+            longitudes = pd.to_numeric(df[lon_col], errors="coerce")
+            valid = latitudes.notna() & longitudes.notna() & df[serial_col].notna()
             sensors = gpd.GeoDataFrame(
-                {"sensor_id": df[serial_col].astype(str)},
-                geometry=gpd.points_from_xy(df[lon_col], df[lat_col]),
+                {"sensor_id": df.loc[valid, serial_col].astype(str).to_numpy()},
+                geometry=gpd.points_from_xy(longitudes[valid], latitudes[valid]),
                 crs=CRS_WGS,
             ).to_crs(CRS_METRIC)
         elif temp_col:  # 기온이 있으면 측정값 파일
-            serial_col = find_col(df, SERIAL_CANDIDATES)
-            time_col = find_col(df, TIME_CANDIDATES)
+            serial_col = find_col(header, SERIAL_CANDIDATES)
+            time_col = find_col(header, TIME_CANDIDATES)
             if serial_col is None or time_col is None:
-                raise ValueError(f"{path.name}: 측정값 컬럼 인식 실패. 실제: {list(df.columns)}")
+                raise ValueError(f"{path.name}: 측정값 컬럼 인식 실패. 실제: {list(header.columns)}")
+            df = read_csv_kr(
+                path,
+                usecols=[serial_col, time_col, temp_col],
+                low_memory=False,
+            )
             readings.append(
                 pd.DataFrame(
                     {
                         "sensor_id": df[serial_col].astype(str),
-                        "ts": pd.to_datetime(df[time_col], errors="coerce"),
+                        "ts": pd.to_datetime(
+                            df[time_col].astype("string").str.replace("_", " ", n=1),
+                            format="%Y-%m-%d %H:%M:%S",
+                            errors="coerce",
+                        ),
                         "temp": pd.to_numeric(df[temp_col], errors="coerce"),
                     }
                 )

@@ -23,12 +23,12 @@ def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-def read_csv_kr(path: str | Path) -> pd.DataFrame:
+def read_csv_kr(path: str | Path, **kwargs) -> pd.DataFrame:
     """한국 공공 CSV를 utf-8로 읽고, 실패하면 cp949로 재시도한다."""
     try:
-        return pd.read_csv(path, encoding="utf-8")
+        return pd.read_csv(path, encoding="utf-8", **kwargs)
     except UnicodeDecodeError:
-        return pd.read_csv(path, encoding="cp949")
+        return pd.read_csv(path, encoding="cp949", **kwargs)
 
 
 def read_shp_metric(path: str | Path) -> gpd.GeoDataFrame:

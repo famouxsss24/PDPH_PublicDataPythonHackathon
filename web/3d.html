@@ -1,224 +1,73 @@
 <!doctype html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>그늘로 3D — 그림자 시뮬레이션 근거</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
-<style>
-  :root { --ink:#1a2340; --sun:#ff8a3d; --shade-route:#2563eb; --ok:#059669; --hot:#ef4444; }
-  * { box-sizing: border-box; } html, body { margin: 0; height: 100%; }
-  body { font-family: Pretendard, 'Malgun Gothic', sans-serif; color: var(--ink); }
-  #map { position: fixed; inset: 0; background: #dfe3d8; }
-
-  .card {
-    background: rgba(255,255,255,.9); backdrop-filter: blur(14px) saturate(1.4);
-    border: 1px solid rgba(255,255,255,.65); border-radius: 16px;
-    box-shadow: 0 12px 40px rgba(26,35,64,.2);
-  }
-  #hud { position: fixed; top: 16px; left: 16px; z-index: 10; width: 300px; padding: 16px 18px; }
-  #hud h1 { font-size: 17px; margin: 0 0 2px; display: flex; gap: 8px; align-items: center; }
-  #hud small { color: #6b7396; font-size: 11.5px; }
-  #clock { font-size: 40px; font-weight: 800; color: var(--sun); letter-spacing: -.02em; margin: 8px 0 0; font-variant-numeric: tabular-nums; }
-  #sunbar { height: 6px; border-radius: 3px; background: rgba(26,35,64,.08); margin: 8px 0 4px; overflow: hidden; }
-  #sunbar i { display: block; height: 100%; width: 0; border-radius: 3px;
-    background: linear-gradient(90deg, #ffd166, var(--sun), #6d5bd0, #1a2340); transition: width .25s linear; }
-  #subline { font-size: 11.5px; color: #6b7396; }
-  #ctrls { display: flex; gap: 8px; margin-top: 12px; }
-  #ctrls button {
-    flex: 1; border: 0; border-radius: 10px; padding: 9px 0; cursor: pointer;
-    font: inherit; font-size: 12.5px; font-weight: 700; background: var(--ink); color: #fff; transition: transform .15s;
-  }
-  #ctrls button:hover { transform: translateY(-1px); }
-  #ctrls button.warn { background: var(--hot); }
-  #ctrls a {
-    flex: 1; text-align: center; border-radius: 10px; padding: 9px 0; text-decoration: none;
-    font-size: 12.5px; font-weight: 700; background: rgba(26,35,64,.07); color: #59617f;
-  }
-  #routechip {
-    position: fixed; top: 16px; right: 16px; z-index: 10; padding: 13px 16px; font-size: 13px; display: none; max-width: 300px;
-  }
-  #routechip b { color: var(--shade-route); }
-  #note {
-    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 10;
-    padding: 9px 18px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: #59617f; white-space: nowrap;
-  }
-  .mk { width: 26px; height: 26px; border-radius: 50% 50% 50% 4px; transform: rotate(-45deg);
-    display: grid; place-items: center; border: 2.5px solid #fff; box-shadow: 0 4px 10px rgba(26,35,64,.4); }
-  .mk span { transform: rotate(45deg); color: #fff; font-size: 10px; font-weight: 800; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#eef2ef">
+  <title>그늘로 3D - 건물 높이와 시간별 그림자</title>
+  <link rel="preconnect" href="https://tiles.openfreemap.org">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="./css/tokens.css">
+  <link rel="stylesheet" href="./css/3d.css">
 </head>
 <body>
-<div id="map"></div>
+  <main id="map" aria-label="노원구 건물 높이와 시간별 그림자 3D 지도"></main>
 
-<div id="hud" class="card">
-  <h1>⛱️ 그늘로 <span style="font-size:11px;background:rgba(37,99,235,.1);color:var(--shade-route);border-radius:6px;padding:2px 7px">3D 근거</span></h1>
-  <small>노원구 12,273개 건물 · pysolar 태양궤적 물리계산</small>
-  <div id="clock">--:--</div>
-  <div id="sunbar"><i id="sunfill"></i></div>
-  <div id="subline">그림자는 눈속임이 아니라 실제 계산 결과입니다</div>
-  <div id="ctrls">
-    <button id="play">⏸ 정지</button>
-    <a href="/">← 지도로</a>
-  </div>
-</div>
+  <section class="scene-panel" aria-label="3D 그림자 시간 제어">
+    <header>
+      <a class="brand" href="./" aria-label="그늘로 경로 지도로 돌아가기">
+        <span class="brand-mark"><i data-lucide="route"></i></span>
+        <span><strong>그늘로</strong><small>3D SHADE MAP</small></span>
+      </a>
+      <span class="scene-badge">건물 높이 기반</span>
+    </header>
 
-<div id="routechip" class="card"></div>
-<div id="note" class="card">🖱️ 드래그 회전 · Ctrl+드래그 기울이기 · 휠 확대</div>
+    <div class="scene-time">
+      <span>
+        <p>그림자 시각</p>
+        <strong id="clock">14:00</strong>
+      </span>
+      <span id="sunCompass" class="sun-compass" aria-hidden="true">
+        <i data-lucide="sun"></i><b></b>
+      </span>
+    </div>
+    <small id="sunMeta">8월 6일 · 태양 위치를 불러오는 중</small>
 
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script>
-'use strict';
-const qp = new URLSearchParams(location.search);
-const parsePt = s => { const [a, b] = (s || '').split(',').map(Number); return isFinite(a) && isFinite(b) ? { lat: a, lon: b } : null; };
-const FROM = parsePt(qp.get('from')), TO = parsePt(qp.get('to'));
-const HOUR = +(qp.get('hour') || 14);
+    <input id="frameRange" type="range" min="7" max="18" step="0.25" value="14" aria-label="3D 그림자 시각">
+    <div class="frame-ticks" aria-hidden="true"><span>07</span><span>12</span><span>18</span></div>
 
-const map = new maplibregl.Map({
-  container: 'map',
-  style: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-  center: [127.0655, 37.6425], zoom: 14.4, pitch: 58, bearing: -18,
-  antialias: true, maxPitch: 72,
-});
-map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+    <div class="scene-actions">
+      <button id="play" class="primary-command" type="button" aria-pressed="false">
+        <i data-lucide="play"></i><span>시간 재생</span>
+      </button>
+      <button id="orbit" class="icon-command" type="button" aria-label="시점 자동 회전" aria-pressed="false" title="시점 자동 회전">
+        <i data-lucide="rotate-3d"></i>
+      </button>
+      <button id="themeToggle" class="icon-command" type="button" aria-label="라이트 모드로 전환" aria-pressed="true" title="라이트 모드로 전환">
+        <i data-lucide="sun"></i>
+      </button>
+    </div>
 
-const $ = id => document.getElementById(id);
-let frames = [];          // [{hour, idx}] 그림자 프레임 목록
-let playing = true, animT = 0;      // animT: 프레임 사이 연속 시각 (7.0 ~ 19.0)
-const SPEED = 1.15;       // 초당 시뮬레이션 시간(시간 단위)
+    <a id="returnToRoute" class="return-command" href="./">
+      <i data-lucide="arrow-left"></i>
+      <span><strong>2D 경로 지도로 돌아가기</strong><small>선택한 경로 화면을 이어서 봅니다</small></span>
+    </a>
 
-function firstSymbolLayer() {
-  for (const ly of map.getStyle().layers) if (ly.type === 'symbol') return ly.id;
-  return undefined;
-}
+    <div id="routeEvidence" class="route-summary-3d" hidden></div>
+    <p id="loadStatus" class="load-status">3D 데이터를 준비하고 있습니다.</p>
+  </section>
 
-map.on('load', async () => {
-  const before = firstSymbolLayer();
+  <aside class="height-legend" aria-label="건물 높이 범례">
+    <header><strong>건물 높이</strong><i data-lucide="building-2"></i></header>
+    <span class="height-scale" aria-hidden="true"></span>
+    <div><span>3m</span><span>45m</span><span>90m+</span></div>
+    <p id="buildingHover">건물을 가리키면 높이와 층수를 표시합니다.</p>
+  </aside>
 
-  /* ---- 3D 건물 압출 ---- */
-  try {
-    const buildings = await (await fetch('/api/buildings')).json();
-    map.addSource('bld', { type: 'geojson', data: buildings });
-    map.addLayer({
-      id: 'bld-3d', type: 'fill-extrusion', source: 'bld',
-      paint: {
-        'fill-extrusion-height': ['get', 'height_eff'],
-        'fill-extrusion-color': ['interpolate', ['linear'], ['get', 'height_eff'],
-          3, '#efece3', 15, '#dcd9cf', 40, '#c3c7d9', 90, '#9fa7c9'],
-        'fill-extrusion-opacity': 0.92,
-      },
-    }, before);
-  } catch (e) { console.warn('건물 로드 실패', e); }
+  <div class="map-error" id="mapError" role="alert" hidden></div>
 
-  /* ---- 그림자 프레임 (2겹 크로스페이드) ---- */
-  try {
-    const fr = await (await fetch('/api/shade_frames')).json();
-    frames = fr.features.map(f => f.properties.hour).sort((a, b) => a - b);
-    map.addSource('shade', { type: 'geojson', data: fr });
-    for (const layerId of ['shade-a', 'shade-b']) {
-      map.addLayer({
-        id: layerId, type: 'fill', source: 'shade',
-        paint: { 'fill-color': '#2f3e7c', 'fill-opacity': 0 },
-        filter: ['==', ['get', 'hour'], -1],
-      }, 'bld-3d');
-    }
-    animT = frames[0];
-    requestAnimationFrame(tick);
-  } catch (e) {
-    $('subline').textContent = '⚠️ 그림자 프레임 없음 — pipeline/09_shadow_frames.py 실행 필요';
-  }
-
-  /* ---- 경로: 실시간 드로잉 ---- */
-  if (FROM && TO) drawRoute();
-});
-
-/* 그림자 애니메이션: animT(연속 시각)를 진행시키며 인접 프레임 두 장을 크로스페이드 */
-let lastTs = null;
-function tick(ts) {
-  if (lastTs !== null && playing && frames.length) {
-    animT += (ts - lastTs) / 1000 * SPEED;
-    const end = frames[frames.length - 1];
-    if (animT > end) animT = frames[0];  // 하루 반복
-    let i = 0;
-    while (i < frames.length - 1 && frames[i + 1] <= animT) i++;
-    const h0 = frames[i], h1 = frames[Math.min(i + 1, frames.length - 1)];
-    const f = h1 > h0 ? (animT - h0) / (h1 - h0) : 0;
-    map.setFilter('shade-a', ['==', ['get', 'hour'], h0]);
-    map.setFilter('shade-b', ['==', ['get', 'hour'], h1]);
-    map.setPaintProperty('shade-a', 'fill-opacity', 0.45 * (1 - f));
-    map.setPaintProperty('shade-b', 'fill-opacity', 0.45 * f);
-    const hh = Math.floor(animT), mm = Math.floor((animT - hh) * 60);
-    $('clock').textContent = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-    $('sunfill').style.width = ((animT - frames[0]) / (end - frames[0]) * 100) + '%';
-  }
-  lastTs = ts;
-  requestAnimationFrame(tick);
-}
-$('play').onclick = () => {
-  playing = !playing;
-  $('play').textContent = playing ? '⏸ 정지' : '▶ 재생';
-  $('play').classList.toggle('warn', !playing);
-};
-
-/* 경로: /api/routes 추천 경로를 받아 선이 자라나는 애니메이션으로 그림 */
-function mkMarker(color, label, lat, lon) {
-  const el = document.createElement('div');
-  el.innerHTML = `<div class="mk" style="background:${color}"><span>${label}</span></div>`;
-  new maplibregl.Marker({ element: el.firstChild, anchor: 'bottom' }).setLngLat([lon, lat]).addTo(map);
-}
-async function drawRoute() {
-  try {
-    const qs = `start_lat=${FROM.lat}&start_lon=${FROM.lon}&end_lat=${TO.lat}&end_lon=${TO.lon}&hour=${HOUR}`;
-    const d = await (await fetch('/api/routes?' + qs)).json();
-    const rec = d.routes[d.recommended_idx];
-    const shortest = d.routes.find(r => r.labels.includes('최단'));
-    const coords = rec.coords.map(c => [c[1], c[0]]);  // [lat,lon] → [lon,lat]
-
-    mkMarker('#059669', '출', FROM.lat, FROM.lon);
-    mkMarker('#ef4444', '도', TO.lat, TO.lon);
-
-    // 최단(비교용, 얇은 빨강) — 추천과 다를 때만
-    if (shortest && shortest !== rec) {
-      map.addSource('rt-s', { type: 'geojson',
-        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: shortest.coords.map(c => [c[1], c[0]]) } } });
-      map.addLayer({ id: 'rt-s', type: 'line', source: 'rt-s',
-        paint: { 'line-color': '#ef4444', 'line-width': 3, 'line-opacity': .65, 'line-dasharray': [1, 2] },
-        layout: { 'line-cap': 'round', 'line-join': 'round' } });
-    }
-    // 추천 경로: 흰 케이싱 + 파랑 본선 (좌표를 점점 늘려 실시간 탐색처럼)
-    const src = { type: 'Feature', geometry: { type: 'LineString', coordinates: [coords[0], coords[0]] } };
-    map.addSource('rt', { type: 'geojson', data: src });
-    map.addLayer({ id: 'rt-case', type: 'line', source: 'rt',
-      paint: { 'line-color': '#fff', 'line-width': 9, 'line-opacity': .9 },
-      layout: { 'line-cap': 'round', 'line-join': 'round' } });
-    map.addLayer({ id: 'rt-main', type: 'line', source: 'rt',
-      paint: { 'line-color': '#2563eb', 'line-width': 5.5 },
-      layout: { 'line-cap': 'round', 'line-join': 'round' } });
-
-    // 카메라를 경로에 맞추고, 3초에 걸쳐 선을 그린다
-    const lons = coords.map(c => c[0]), lats = coords.map(c => c[1]);
-    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]],
-      { padding: { top: 90, bottom: 60, left: 340, right: 90 }, pitch: 58, bearing: -18, duration: 1400 });
-
-    const t0 = performance.now(), DUR = 3000;
-    function grow(ts) {
-      const p = Math.min((ts - t0) / DUR, 1);
-      const n = Math.max(2, Math.ceil(coords.length * p));
-      src.geometry.coordinates = coords.slice(0, n);
-      map.getSource('rt').setData(src);
-      if (p < 1) requestAnimationFrame(grow);
-      else {
-        $('routechip').style.display = 'block';
-        $('routechip').innerHTML =
-          `🧭 <b>추천 그늘경로</b> ${rec.time_min}분 · ${rec.dist_m}m · 그늘 <b>${rec.shade_pct}%</b>` +
-          (shortest && shortest !== rec
-            ? `<br><span style="color:#8a90ab;font-size:12px">최단 대비 +${rec.delta_min}분, 그늘 ${shortest.shade_pct}%→${rec.shade_pct}%</span>` : '');
-      }
-    }
-    requestAnimationFrame(grow);
-  } catch (e) { console.warn('경로 그리기 실패', e); }
-}
-</script>
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script type="module" src="./js/3d.js?v=20260715b"></script>
 </body>
 </html>

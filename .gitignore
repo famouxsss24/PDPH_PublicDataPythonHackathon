@@ -7,6 +7,9 @@ data/processed/
 dataset/
 cache/
 docs/학습노트.md
+docs/HANDOFF.md
+docs/IDEAS.md
+docs/*.jpg
 .ruff_cache/
 .pytest_cache/
 *.egg-info/

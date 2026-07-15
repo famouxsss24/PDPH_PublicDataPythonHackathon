@@ -1,19 +1,46 @@
 """FastAPI 서버 — 사전계산된 그늘·격자 레이어와 보행망으로 경로 API를 제공한다."""
 
 import json
+import os
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
+import geopandas as gpd
 import networkx as nx
+import requests
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from shapely.geometry import box
 
-from gneulro.config import BETA_DEFAULT, CRS_WGS, HOURS
+from gneulro.config import BETA_DEFAULT, CALC_DATE, CRS_WGS, HOURS, NOWON_BBOX, TZ
 from gneulro.departure import exposure_curve, recommend
 from gneulro.graph import load_graph, route_options, route_pair, shade_route_nodes
-from gneulro.places import load_places, search_places
+from gneulro.places import (
+    kakao_places,
+    kakao_reverse,
+    load_places,
+    merge_places,
+    nearby_places,
+    nearest_place,
+    popular_places,
+    search_places,
+)
+from gneulro.shadowcast import sun_position
 from gneulro.store import Store
 
 app = FastAPI(title="그늘로 API", description="태양을 피하는 그늘 경로 내비게이션")
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)  # 수 MB GeoJSON 압축
+
+
+@app.middleware("http")
+async def disable_static_cache(request, call_next):
+    """개발·발표 중 프론트 수정이 일반 새로고침에도 즉시 반영되게 한다."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 # ---- 시작 시 전역 1회 로드 (SPEC §7) ----
 try:
@@ -28,13 +55,50 @@ except Exception as exc:
 
 _shade_cache: dict[int, dict] = {}
 _grid_cache: dict[int, dict] = {}
-_places = load_places()  # 08_places 산출물 (없으면 빈 목록 → 검색만 비활성)
+_places = load_places()  # OSM 색인 — 카카오 키가 없거나 호출 실패 시 폴백
+_kakao_key = os.getenv("KAKAO_REST_KEY", "").strip()  # Store()가 .env를 이미 로드함
+_kakao_cache: dict[str, list[dict]] = {}
+_kakao_status = "configured" if _kakao_key else "not_configured"
+_kakao_last_error: str | None = None
+
+
+def _record_kakao_error(exc: requests.RequestException) -> None:
+    """비밀키나 원문 응답을 노출하지 않고 검색 공급자 장애 유형만 기록한다."""
+    global _kakao_status, _kakao_last_error
+    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    if status_code in {401, 403}:
+        _kakao_status = "authorization_required"
+        _kakao_last_error = f"http_{status_code}"
+    elif status_code == 429:
+        _kakao_status = "quota_exceeded"
+        _kakao_last_error = "http_429"
+    else:
+        _kakao_status = "unavailable"
+        _kakao_last_error = f"http_{status_code}" if status_code else "network_error"
 
 
 def _check_hour(hour: int) -> None:
     """hour가 사전계산 시간대가 아니면 422를 낸다."""
     if hour not in HOURS:
         raise HTTPException(422, detail=f"hour는 {HOURS} 중 하나여야 합니다.")
+
+
+def _parse_depart_at(depart_at: str | None, fallback_hour: int) -> float:
+    """now 또는 HH:MM을 경로 가중치 보간용 소수 시각으로 바꾼다."""
+    if depart_at is None:
+        _check_hour(fallback_hour)
+        return float(fallback_hour)
+    if depart_at == "now":
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        return now.hour + now.minute / 60
+    try:
+        hour_text, minute_text = depart_at.split(":", maxsplit=1)
+        hour_value, minute_value = int(hour_text), int(minute_text)
+    except (ValueError, AttributeError):
+        raise HTTPException(422, detail="depart_at은 now 또는 HH:MM 형식이어야 합니다.") from None
+    if not (0 <= hour_value <= 23 and 0 <= minute_value <= 59):
+        raise HTTPException(422, detail="depart_at 시각 범위가 올바르지 않습니다.")
+    return hour_value + minute_value / 60
 
 
 def _shade_geojson(hour: int) -> dict:
@@ -108,19 +172,67 @@ def api_route(
 
 
 _static_cache: dict[str, dict] = {}
+_static_layers: dict[str, gpd.GeoDataFrame] = {}
+
+
+def _parse_bbox(bbox_text: str | None) -> tuple[float, float, float, float] | None:
+    if not bbox_text:
+        return None
+    try:
+        bounds = tuple(float(value) for value in bbox_text.split(","))
+    except ValueError:
+        raise HTTPException(422, detail="bbox는 west,south,east,north 형식이어야 합니다.") from None
+    if len(bounds) != 4 or bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
+        raise HTTPException(422, detail="bbox 범위가 올바르지 않습니다.")
+    west, south, east, north = NOWON_BBOX
+    clipped = (
+        max(west, bounds[0]),
+        max(south, bounds[1]),
+        min(east, bounds[2]),
+        min(north, bounds[3]),
+    )
+    if clipped[0] >= clipped[2] or clipped[1] >= clipped[3]:
+        raise HTTPException(422, detail="bbox가 노원구 데이터 범위와 겹치지 않습니다.")
+    return clipped
+
+
+def _viewport_geojson(name: str, bounds: tuple[float, float, float, float], simplify_m: float) -> dict:
+    key = f"{name}:{','.join(f'{value:.4f}' for value in bounds)}:{simplify_m}"
+    if key in _static_cache:
+        return _static_cache[key]
+    if name not in _static_layers:
+        _static_layers[name] = store.load_layer(name)
+    layer = _static_layers[name]
+    clip_geometry = gpd.GeoSeries([box(*bounds)], crs=CRS_WGS).to_crs(layer.crs).iloc[0]
+    subset = layer[layer.intersects(clip_geometry)].copy()
+    subset.geometry = subset.geometry.intersection(clip_geometry)
+    subset = subset[~subset.geometry.is_empty]
+    _static_cache[key] = store.to_geojson(subset, simplify_m=simplify_m)
+    return _static_cache[key]
 
 
 @app.get("/api/buildings")
-def api_buildings() -> dict:
+def api_buildings(bbox: str | None = None, lod: str = "standard") -> dict:
     """3D 압출용 건물 footprint + height_eff GeoJSON (1m 단순화, 시작 후 첫 호출에 캐시)."""
+    bounds = _parse_bbox(bbox)
+    if bounds:
+        return _viewport_geojson("buildings", bounds, 2.5 if lod == "mobile" else 1.0)
     if "buildings" not in _static_cache:
         _static_cache["buildings"] = store.layer_geojson("buildings", simplify_m=1.0)
     return _static_cache["buildings"]
 
 
 @app.get("/api/shade_frames")
-def api_shade_frames() -> dict:
+def api_shade_frames(bbox: str | None = None, lod: str = "standard") -> dict:
     """그림자 애니메이션 프레임(07~19시 매시) GeoJSON — 09_shadow_frames 산출물."""
+    bounds = _parse_bbox(bbox)
+    if bounds:
+        try:
+            return _viewport_geojson("shadows_anim", bounds, 4.5 if lod == "mobile" else 2.5)
+        except Exception:
+            raise HTTPException(
+                503, detail="그림자 프레임이 아직 없습니다. pipeline/09_shadow_frames.py를 실행하세요."
+            ) from None
     if "frames" not in _static_cache:
         try:
             _static_cache["frames"] = store.layer_geojson("shadows_anim", simplify_m=3.0)
@@ -131,25 +243,135 @@ def api_shade_frames() -> dict:
     return _static_cache["frames"]
 
 
+@app.get("/api/shade_frame")
+def api_shade_frame(hour: int = 14) -> dict:
+    """07~18시 애니메이션 중 한 프레임만 반환해 메인 지도의 전송량을 줄인다."""
+    if hour < 7 or hour > 18:
+        raise HTTPException(422, detail="그림자 탐험 시간은 7~18시여야 합니다.")
+    key = f"frame_{hour}"
+    if key not in _static_cache:
+        frames = api_shade_frames()
+        features = [feature for feature in frames["features"] if feature["properties"]["hour"] == hour]
+        if not features:
+            raise HTTPException(404, detail=f"{hour}시 그림자 프레임이 없습니다.")
+        _static_cache[key] = {"type": "FeatureCollection", "features": features}
+    return _static_cache[key]
+
+
+@app.get("/api/health")
+def api_health() -> dict:
+    """프론트가 실데이터 사용 가능 여부를 확인하는 가벼운 상태 응답."""
+    return {
+        "status": "ok",
+        "buildings": int(len(store.load_layer("buildings"))),
+        "route_graph": {"nodes": G.number_of_nodes(), "edges": G.number_of_edges()},
+        "hours": HOURS,
+        "shadow_animation": True,
+        "place_search": {
+            "local_entries": len(_places),
+            "kakao": _kakao_status,
+            "last_error": _kakao_last_error,
+        },
+    }
+
+
+@app.get("/api/sun_positions")
+def api_sun_positions() -> dict:
+    """3D 조명 애니메이션용 07~18시 태양 고도와 방위각."""
+    positions = []
+    for hour in range(7, 19):
+        when = datetime.combine(CALC_DATE, time(hour=hour), tzinfo=TZ)
+        altitude, azimuth = sun_position(37.65, 127.065, when)
+        positions.append({
+            "hour": hour,
+            "altitude": round(altitude, 2),
+            "azimuth": round(azimuth, 2),
+        })
+    return {"date": CALC_DATE.isoformat(), "positions": positions}
+
+
 @app.get("/api/places")
 def api_places(q: str = "") -> dict:
-    """장소 이름 검색 — 역·동네·학교·공원·아파트 등 (08_places 색인 기반)."""
-    return {"results": search_places(q, _places), "total": len(_places)}
+    """장소 검색 — 카카오 상호/주소 결과와 OSM 로컬 색인을 합친다."""
+    global _kakao_status, _kakao_last_error
+    q = q.strip()
+    if not q:
+        return {
+            "results": popular_places(_places),
+            "source": "local",
+            "provider_status": _kakao_status,
+        }
+    local_results = search_places(q, _places)
+    if _kakao_key:
+        try:
+            if q not in _kakao_cache:
+                if len(_kakao_cache) > 500:  # 타이핑 자동완성 캐시 무한 증가 방지
+                    _kakao_cache.clear()
+                _kakao_cache[q] = kakao_places(q, _kakao_key)
+            _kakao_status = "active"
+            _kakao_last_error = None
+            return {
+                "results": merge_places(_kakao_cache[q], local_results),
+                "source": "kakao+local",
+                "provider_status": _kakao_status,
+            }
+        except requests.RequestException as exc:
+            _record_kakao_error(exc)
+    return {
+        "results": local_results,
+        "source": "local",
+        "provider_status": _kakao_status,
+    }
+
+
+@app.get("/api/reverse")
+def api_reverse(lat: float, lon: float) -> dict:
+    """지도 클릭 좌표를 건물명·장소명 또는 주소로 바꾼다."""
+    west, south, east, north = NOWON_BBOX
+    if not (west <= lon <= east and south <= lat <= north):
+        raise HTTPException(422, detail="노원구 안의 위치를 선택해주세요.")
+    if _kakao_key:
+        try:
+            result = kakao_reverse(lat, lon, _kakao_key)
+            if result:
+                return result
+        except requests.RequestException:
+            pass
+    result = nearest_place(lat, lon, _places)
+    if result:
+        return {**result, "lat": lat, "lon": lon}
+    return {"name": "지도에서 선택한 위치", "cat": "위치", "lat": lat, "lon": lon}
+
+
+@app.get("/api/nearby")
+def api_nearby(lat: float, lon: float, radius_m: int = 240, limit: int = 7) -> dict:
+    """도보 안내 위치 주변의 이름 있는 건물·시설 라벨을 반환한다."""
+    west, south, east, north = NOWON_BBOX
+    if not (west <= lon <= east and south <= lat <= north):
+        raise HTTPException(422, detail="노원구 안의 위치를 선택해주세요.")
+    radius = max(80, min(radius_m, 400))
+    result_limit = max(1, min(limit, 10))
+    return {"results": nearby_places(lat, lon, _places, radius, result_limit)}
 
 
 @app.get("/api/routes")
 def api_routes(
-    start_lat: float, start_lon: float, end_lat: float, end_lon: float, hour: int = 14
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+    hour: int = 14,
+    depart_at: str | None = None,
 ) -> dict:
     """최단 + 그늘 등급별(40/60/80%+) 경로 목록과 추천 경로를 반환한다."""
-    _check_hour(hour)
+    route_hour = _parse_depart_at(depart_at, hour)
     try:
-        result = route_options(G, (start_lat, start_lon), (end_lat, end_lon), hour)
+        result = route_options(G, (start_lat, start_lon), (end_lat, end_lon), route_hour)
     except nx.NetworkXNoPath:
         raise HTTPException(404, detail="두 지점을 잇는 보행 경로를 찾지 못했습니다.") from None
     except nx.NodeNotFound:
         raise HTTPException(404, detail="출발/도착 지점을 도로망에 연결하지 못했습니다.") from None
-    return {"hour": hour, **result}
+    return {"hour": route_hour, "depart_at_used": depart_at or f"{hour:02d}:00", **result}
 
 
 @app.get("/api/departure")
