@@ -202,19 +202,24 @@ for hour in HOURS:
 shutil.copy(ROOT / "data/processed/places.json", OUT / "places.json")
 print("places.json 복사 완료")
 
-# ---- 3D mock: 데모 경로 주변 건물 높이 + 07~18시 그림자 프레임 ----
-buildings = gpd.read_parquet(ROOT / "data/processed/buildings.parquet")
-buildings["geometry"] = buildings.geometry.simplify(1.0)
-buildings = buildings.to_crs(CRS_WGS)
-buildings["geometry"] = buildings.geometry.intersection(clip_box)
-buildings = buildings[~buildings.geometry.is_empty]
-building_fc = json.loads(buildings.to_json())
-for feature in building_fc["features"]:
-    feature["geometry"]["coordinates"] = round_coords(feature["geometry"]["coordinates"])
-(OUT / "buildings.json").write_text(
-    json.dumps(building_fc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
-)
-print(f"buildings.json: {len(building_fc['features'])}동")
+# ---- 2D/3D mock: 노원구 전체 건물. bbox는 클라이언트의 빠른 뷰포트 필터에 사용한다. ----
+source_buildings = gpd.read_parquet(ROOT / "data/processed/buildings.parquet")
+for filename, simplify_m in (("buildings.json", 1.0), ("buildings_mobile.json", 3.0)):
+    buildings = source_buildings.copy()
+    buildings["geometry"] = buildings.geometry.simplify(simplify_m)
+    buildings = buildings.to_crs(CRS_WGS)
+    buildings = buildings[~buildings.geometry.is_empty]
+    bounds = buildings.geometry.bounds
+    building_fc = json.loads(buildings.to_json())
+    for feature, feature_bounds in zip(
+        building_fc["features"], bounds.itertuples(index=False, name=None), strict=True
+    ):
+        feature["bbox"] = [round(float(value), 5) for value in feature_bounds]
+        feature["geometry"]["coordinates"] = round_coords(feature["geometry"]["coordinates"])
+    (OUT / filename).write_text(
+        json.dumps(building_fc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+    )
+    print(f"{filename}: {len(building_fc['features'])}동")
 
 frames = gpd.read_parquet(ROOT / "data/processed/shadows_anim.parquet")
 frames["geometry"] = frames.geometry.simplify(3.0)

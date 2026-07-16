@@ -1,19 +1,7 @@
-.agents/
-.claude/
-.github/
-.venv/
-cache/
-data/
-dataset/
-docs/
-pipeline/
-reports/
-src/
-tests/
-tmp/
-api/*.py
-*.md
-*.toml
-*.yml
-.env*
-main.py
+# Vercel only needs the static application and its lightweight functions.
+*
+!web
+!web/**
+!api
+!api/*.mjs
+!vercel.json

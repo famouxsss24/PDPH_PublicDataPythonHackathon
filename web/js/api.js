@@ -264,11 +264,25 @@ export async function fetchBuildings({ bbox = null, lod = "standard" } = {}) {
   const query = !USE_MOCK && bbox
     ? `?${new URLSearchParams({ bbox: bbox.join(","), lod })}`
     : "";
-  return requestJson(
-    "buildings",
-    USE_MOCK ? "./mock/buildings.json" : `/api/buildings${query}`,
+  if (!USE_MOCK) {
+    return requestJson("buildings", `/api/buildings${query}`, { cache: true });
+  }
+
+  const mobile = lod === "mobile";
+  const buildings = await requestJson(
+    mobile ? "buildings-mobile" : "buildings-standard",
+    mobile ? "./mock/buildings_mobile.json" : "./mock/buildings.json",
     { cache: true },
   );
+  if (!Array.isArray(bbox) || bbox.length !== 4) return buildings;
+
+  const [west, south, east, north] = bbox.map(Number);
+  const features = buildings.features.filter((feature) => {
+    const [minLon, minLat, maxLon, maxLat] = feature.bbox ?? [];
+    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return true;
+    return maxLon >= west && minLon <= east && maxLat >= south && minLat <= north;
+  });
+  return { type: "FeatureCollection", features };
 }
 
 export async function fetchSunPositions() {
