@@ -1,10 +1,9 @@
 const MOCK_HOURS = [10, 13, 14, 15, 17];
 const params = new URLSearchParams(window.location.search);
 
-// A fresh clone ships this generated snapshot. Live API use is explicit because
-// its source GeoParquet artifacts are intentionally not committed.
 export const USE_MOCK =
-  params.get("mock") === "1" || params.get("api") !== "1";
+  params.get("mock") === "1" ||
+  (params.get("api") !== "1" && ["8080", ""].includes(window.location.port));
 
 const requests = new Map();
 const staticCache = new Map();

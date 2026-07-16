@@ -3,7 +3,6 @@ __pycache__/
 *.pyc
 .env
 data/raw/
-data/processed/
 dataset/
 cache/
 docs/학습노트.md

@@ -173,9 +173,9 @@ Get-ChildItem web\js\*.js | ForEach-Object { node --check $_.FullName }
 
 ## 13. 새 clone 실행 보장
 
-- 기본 브라우저 경로는 모든 포트에서 커밋된 `web/mock` 스냅샷을 사용한다. 따라서 새 clone은 제외된 원천 SHP/CSV·GeoParquet 산출물 없이도 서비스 화면·검색·경로 비교·3D 장면을 실행한다.
-- live 파이프라인 엔드포인트는 `?api=1` 쿼리를 명시해야 한다. 산출물이 없더라도 FastAPI는 기동하며 `/api/health`는 `status: demo`, `data_mode: snapshot`을 반환한다.
+- 실행에 필요한 `data/processed` GeoParquet·GraphML·장소 색인을 저장소에 포함한다. 새 clone은 제외된 원천 SHP/CSV·PostGIS·Kakao 키 없이도 기본 FastAPI 실행에서 live API를 사용한다.
+- `web/mock`은 정적 서버·오프라인 발표용 실제 파이프라인 스냅샷이며, FastAPI 8000 포트에서는 live API가 기본값이다. 파이프라인 산출물이 없는 특수 환경에서만 `/api/health`가 `status: demo`, `data_mode: snapshot`을 반환한다.
 
 ### 변경 기록
 
-- 2026-07-16: 새 clone의 기본값을 추적된 실제 파이프라인 스냅샷으로 변경하고, 데이터 의존 live API를 명시적 `?api=1` opt-in으로 분리했다.
+- 2026-07-16: 새 clone에서 live 서비스를 바로 실행할 수 있도록 필요한 처리 산출물 7개를 버전 관리하고, 기본 `.env.example`을 PostGIS 비사용으로 변경했다.
