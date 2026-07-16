@@ -46,6 +46,8 @@ cp .env.example .env
 
 ## Vercel 배포
 
+공개 서비스: https://gneulro.vercel.app
+
 `vercel.json`은 `web` 정적 스냅샷을 루트에 배포하고 `api/weather.mjs`를 키 없는 현재 날씨 함수로 제공한다. 건물 스냅샷은 노원구 전체 12,273동을 포함하되 화면에 보이는 bbox만 클라이언트에서 추려 렌더링한다. 따라서 원천 데이터나 로컬 DB 없이 검색·경로 비교·3D와 현재 날씨 안내가 함께 동작한다.
 
 ```powershell
