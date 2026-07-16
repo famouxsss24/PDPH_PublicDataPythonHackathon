@@ -52,17 +52,38 @@ try:
     _shadows = store.load_layer("shadows")
     _grid = store.load_layer("grid_cells")
 except Exception as exc:
-    raise RuntimeError(
-        "사전계산 데이터가 없습니다. pipeline 01~04를 먼저 실행하세요."
-    ) from exc
+    # The repository deliberately ships the browser-ready snapshot, not the
+    # large licensed source and GeoParquet artifacts. Keep a fresh clone runnable.
+    store = None
+    G = None
+    _shadows = None
+    _grid = None
+    _startup_data_error = str(exc)
+else:
+    _startup_data_error = None
 
 _shade_cache: dict[int, dict] = {}
 _grid_cache: dict[int, dict] = {}
-_places = load_places()  # OSM 색인 — 카카오 키가 없거나 호출 실패 시 폴백
+try:
+    _places = load_places()  # Local places are optional in snapshot mode.
+except Exception:
+    _places = []
 _kakao_key = os.getenv("KAKAO_REST_KEY", "").strip()  # Store()가 .env를 이미 로드함
 _kakao_cache: dict[str, list[dict]] = {}
 _kakao_status = "configured" if _kakao_key else "not_configured"
 _kakao_last_error: str | None = None
+
+
+def _require_live_data() -> None:
+    """Explain how to enable live endpoints when this clone has only the snapshot."""
+    if _startup_data_error:
+        raise HTTPException(
+            503,
+            detail=(
+                "Live API data is not installed. Open the default snapshot mode, "
+                "or run the documented data pipeline before using ?api=1."
+            ),
+        )
 
 
 def _record_kakao_error(exc: requests.RequestException) -> None:
@@ -226,6 +247,7 @@ def _viewport_geojson(
 @app.get("/api/buildings")
 def api_buildings(bbox: str | None = None, lod: str = "standard") -> dict:
     """3D 압출용 건물 footprint + height_eff GeoJSON (1m 단순화, 시작 후 첫 호출에 캐시)."""
+    _require_live_data()
     bounds = _parse_bbox(bbox)
     if bounds:
         return _viewport_geojson("buildings", bounds, 2.5 if lod == "mobile" else 1.0)
@@ -237,6 +259,7 @@ def api_buildings(bbox: str | None = None, lod: str = "standard") -> dict:
 @app.get("/api/shade_frames")
 def api_shade_frames(bbox: str | None = None, lod: str = "standard") -> dict:
     """그림자 애니메이션 프레임(07~19시 매시) GeoJSON — 09_shadow_frames 산출물."""
+    _require_live_data()
     bounds = _parse_bbox(bbox)
     if bounds:
         try:
@@ -258,6 +281,7 @@ def api_shade_frames(bbox: str | None = None, lod: str = "standard") -> dict:
 @app.get("/api/shade_frame")
 def api_shade_frame(hour: int = 14, bbox: str | None = None, lod: str = "standard") -> dict:
     """07~18시 애니메이션 중 한 프레임만 반환해 메인 지도의 전송량을 줄인다."""
+    _require_live_data()
     if hour < 7 or hour > 18:
         raise HTTPException(422, detail="그림자 탐험 시간은 7~18시여야 합니다.")
     bounds = _parse_bbox(bbox)
@@ -289,6 +313,13 @@ def api_shade_frame(hour: int = 14, bbox: str | None = None, lod: str = "standar
 @app.get("/api/health")
 def api_health() -> dict:
     """프론트가 실데이터 사용 가능 여부를 확인하는 가벼운 상태 응답."""
+    if _startup_data_error:
+        return {
+            "status": "demo",
+            "data_mode": "snapshot",
+            "live_api_ready": False,
+            "detail": "Tracked browser snapshot is ready; live pipeline artifacts are not installed.",
+        }
     return {
         "status": "ok",
         "buildings": int(len(store.load_layer("buildings"))),
@@ -392,6 +423,7 @@ def api_routes(
     depart_at: str | None = None,
 ) -> dict:
     """최단 + 그늘 등급별(40/60/80%+) 경로 목록과 추천 경로를 반환한다."""
+    _require_live_data()
     route_hour = _parse_depart_at(depart_at, hour)
     try:
         result = route_options(G, (start_lat, start_lon), (end_lat, end_lon), route_hour)
@@ -405,6 +437,7 @@ def api_routes(
 @app.get("/api/departure")
 def api_departure(start_lat: float, start_lon: float, end_lat: float, end_lon: float) -> dict:
     """14시 그늘경로를 고정한 뒤 시간대별 노출량 곡선과 추천 출발시각을 반환한다."""
+    _require_live_data()
     try:
         nodes = shade_route_nodes(G, (start_lat, start_lon), (end_lat, end_lon))
     except (nx.NetworkXNoPath, nx.NodeNotFound):

@@ -26,3 +26,9 @@
 - Python: `.venv\Scripts\python.exe -m ruff check .`와 `.venv\Scripts\python.exe -m pytest -q`
 - JavaScript: `web/js/*.js`에 대해 `node --check`
 - 서버: `/api/health`, 장소 검색, 경로 선택, 내비게이션, 3D 라이트/다크 화면 확인
+
+## 새 clone 실행 보장
+
+- GitHub에서 이 저장소를 새로 clone한 사람은 원천 공공데이터, 로컬 DB, 비밀키, 수동 파일 전달 없이 README 기본 실행만으로 서비스 화면·장소 검색·경로 비교·3D 데모를 사용할 수 있어야 한다.
+- 대용량 또는 재배포 제한 원천 데이터를 설정 문제를 가리기 위해 Git에 강제로 넣지 않는다. 실제 파이프라인에서 생성한 `web/mock` 정적 스냅샷을 버전 관리하고 기본 실행 경로로 사용한다.
+- live API를 필수로 바꾸거나 새 데이터 의존성을 추가하기 전에는 `data/raw`, `data/processed`가 전혀 없는 깨끗한 clone에서 서버 기동과 2D·3D 화면을 검증한다. live 데이터가 선택 사항이면 명시적 opt-in과 유용한 오류 응답을 제공한다.

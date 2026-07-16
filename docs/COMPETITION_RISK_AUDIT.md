@@ -68,3 +68,9 @@
 - Kakao Local 사용 설정: https://developers.kakao.com/docs/ko/local/common
 - 서울시 노원구 체력단련장 인허가 정보: https://data.seoul.go.kr/dataList/OA-19862/A/1/datasetView.do
 - 지방행정 인허가 데이터 이용 안내: https://www.localdata.go.kr/portal/portalDataGuide.do?menuNo=30002
+
+## 새 clone 재현성
+
+| 위험 | 완화 조치 |
+|---|---|
+| 팀원·심사자가 제외된 원천 SHP/CSV·GeoParquet 산출물 없이 저장소를 clone하면 데이터 의존 서버가 기동하지 못할 수 있었다. | 기본 실행은 실제 파이프라인에서 생성해 커밋한 `web/mock` 스냅샷을 사용한다. FastAPI는 데모 모드로 기동하고, live 데이터는 파이프라인 준비 후 명시적 `?api=1` opt-in으로만 노출한다. |

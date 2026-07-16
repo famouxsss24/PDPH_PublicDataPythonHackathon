@@ -170,3 +170,12 @@ Get-ChildItem web\js\*.js | ForEach-Object { node --check $_.FullName }
 ## 12. 이 문서 갱신 규칙
 
 코드·화면·API·데이터가 바뀌면 같은 변경에서 이 문서의 최종 갱신일, 해당 섹션, 변경 기록을 수정한다. 경진대회 주장이나 위험이 달라지면 [COMPETITION_RISK_AUDIT.md](COMPETITION_RISK_AUDIT.md)도 함께 수정한다. 저장소 루트 [AGENTS.md](../AGENTS.md)가 이 규칙을 모든 후속 코딩 에이전트에 적용한다.
+
+## 13. 새 clone 실행 보장
+
+- 기본 브라우저 경로는 모든 포트에서 커밋된 `web/mock` 스냅샷을 사용한다. 따라서 새 clone은 제외된 원천 SHP/CSV·GeoParquet 산출물 없이도 서비스 화면·검색·경로 비교·3D 장면을 실행한다.
+- live 파이프라인 엔드포인트는 `?api=1` 쿼리를 명시해야 한다. 산출물이 없더라도 FastAPI는 기동하며 `/api/health`는 `status: demo`, `data_mode: snapshot`을 반환한다.
+
+### 변경 기록
+
+- 2026-07-16: 새 clone의 기본값을 추적된 실제 파이프라인 스냅샷으로 변경하고, 데이터 의존 live API를 명시적 `?api=1` opt-in으로 분리했다.
