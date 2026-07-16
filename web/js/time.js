@@ -47,7 +47,9 @@ function renderChart(exposure) {
     return;
   }
 
-  const values = curve.map((point) => Number(point.exposure_m));
+  const heatMetric = curve.every((point) => Number.isFinite(Number(point.exposure_sun_min)));
+  const metricKey = heatMetric ? "exposure_sun_min" : "exposure_m";
+  const values = curve.map((point) => Number(point[metricKey]));
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = Math.max(1, max - min);
@@ -57,7 +59,7 @@ function renderChart(exposure) {
   const padY = 16;
   const pointAt = (point, index) => {
     const x = padX + (index / Math.max(1, curve.length - 1)) * (width - padX * 2);
-    const y = padY + ((Number(point.exposure_m) - min) / range) * (height - padY * 2);
+    const y = padY + ((Number(point[metricKey]) - min) / range) * (height - padY * 2);
     return [x, y];
   };
   const points = curve.map(pointAt);
@@ -71,7 +73,8 @@ function renderChart(exposure) {
   const lastHour = curve.at(-1).t.slice(0, 2);
 
   elements.chart.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="햇빛 노출이 낮을수록 위쪽에 표시됩니다">
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img"
+      aria-label="${heatMetric ? "일사 노출 부담" : "햇빛 노출 거리"}이 낮을수록 위쪽에 표시됩니다">
       <path d="${area}" fill="#fff0e5"></path>
       <path d="${path}" fill="none" stroke="#ef7d36" stroke-width="3" vector-effect="non-scaling-stroke"></path>
       <line x1="${bestX}" x2="${bestX}" y1="12" y2="${height}" stroke="#167958" stroke-width="1.5" stroke-dasharray="4 4"></line>
@@ -112,7 +115,7 @@ function renderSummary() {
   elements.now.setAttribute("aria-pressed", String(isNow));
   elements.summary.innerHTML = isNow
     ? "현재 시각 기준으로 출발합니다."
-    : `8월 6일 <strong>${clockValue()}</strong> 출발`;
+    : `<strong>${clockValue()}</strong> 출발`;
 }
 
 function selectClock(hour, minute, { behavior = "smooth" } = {}) {

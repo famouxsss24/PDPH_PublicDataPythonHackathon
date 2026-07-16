@@ -9,6 +9,7 @@
 
 ## 프론트엔드
 
+- Orca에서 작업할 때는 `orca` CLI의 내부 브라우저(`goto` → `snapshot` → `screenshot`/`full-screenshot` → `console`)로 검증한다. 일반 인앱 브라우저나 별도 Playwright를 대체 수단으로 사용하지 않는다.
 - 지도 컨트롤, 패널, 안전영역과 새 UI가 데스크톱 및 모바일에서 겹치지 않는지 실제 브라우저로 검증한다.
 - 지도 중심을 가려야 하는 고정 UI는 만들지 않는다. 모바일 내비게이션은 경로와 현재 위치가 가장 먼저 보여야 한다.
 - 애니메이션은 `transform`과 `opacity` 중심으로 구현하고 `prefers-reduced-motion`을 존중한다.

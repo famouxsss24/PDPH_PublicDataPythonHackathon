@@ -208,7 +208,12 @@ def route_segments(G: nx.MultiDiGraph, nodes: list, hour: int | float) -> list[d
 
 
 def route_options(
-    G: nx.MultiDiGraph, start: tuple[float, float], end: tuple[float, float], hour: int | float
+    G: nx.MultiDiGraph,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    hour: int | float,
+    *,
+    include_nodes: bool = False,
 ) -> dict:
     """최단경로 + β 스윕으로 얻은 그늘 대안들을 그늘 등급(40/60/80%+)으로 정리한다.
 
@@ -232,6 +237,8 @@ def route_options(
         stat["steps"] = route_steps(G, list(nodes))
         stat["segments"] = route_segments(G, list(nodes), hour)
         stat["labels"] = []
+        if include_nodes:
+            stat["_nodes"] = list(nodes)
         routes.append(stat)
     routes.sort(key=lambda r: r["time_min"])
 

@@ -7,6 +7,22 @@ export const USE_MOCK =
 
 const requests = new Map();
 const staticCache = new Map();
+const STATIC_CACHE_LIMIT = 12;
+
+function cachedResponse(url) {
+  if (!staticCache.has(url)) return null;
+  const value = staticCache.get(url);
+  staticCache.delete(url);
+  staticCache.set(url, value);
+  return value;
+}
+
+function cacheResponse(url, value) {
+  staticCache.set(url, value);
+  while (staticCache.size > STATIC_CACHE_LIMIT) {
+    staticCache.delete(staticCache.keys().next().value);
+  }
+}
 
 export class StaleRequestError extends Error {
   constructor() {
@@ -16,7 +32,10 @@ export class StaleRequestError extends Error {
 }
 
 async function requestJson(key, url, { cache = false } = {}) {
-  if (cache && staticCache.has(url)) return staticCache.get(url);
+  if (cache) {
+    const cached = cachedResponse(url);
+    if (cached) return cached;
+  }
 
   const previous = requests.get(key);
   if (previous) previous.controller.abort();
@@ -42,7 +61,7 @@ async function requestJson(key, url, { cache = false } = {}) {
     return data;
   });
 
-  if (cache) staticCache.set(url, promise);
+  if (cache) cacheResponse(url, promise);
 
   try {
     return await promise;
@@ -86,16 +105,20 @@ function deriveSegments(route) {
 
 function normalizeLegacyRoutes(payload, departAt, requested) {
   const hour = nearestMockHour(requested.hour, requested.minute);
-  const candidates = payload.routes.map((route, index) => ({
-    ...route,
-    id: `h${hour}-r${index}`,
-    labels: [],
-    minutes: route.time_min,
-    distance_m: route.dist_m,
-    extra_min: route.delta_min ?? 0,
-    segments: deriveSegments(route),
-    arrive_at: addMinutes(departAt, route.time_min),
-  }));
+  const candidates = payload.routes.map((route, index) => {
+    const minutes = route.heat?.mode_time_min ?? route.time_min;
+    return {
+      ...route,
+      id: `h${hour}-r${index}`,
+      labels: [],
+      base_minutes: route.time_min,
+      minutes,
+      distance_m: route.dist_m,
+      extra_min: route.delta_min ?? 0,
+      segments: deriveSegments(route),
+      arrive_at: addMinutes(departAt, minutes),
+    };
+  });
   const shortest = candidates.reduce((best, route) =>
     route.minutes < best.minutes ? route : best,
   );
@@ -229,6 +252,14 @@ export async function fetchNearbyPlaces({ lat, lon }, radius = 240, limit = 7) {
   return payload.results ?? [];
 }
 
+export async function fetchCurrentWeather({ lat, lon }) {
+  const query = new URLSearchParams({
+    lat: Number(lat).toFixed(2),
+    lon: Number(lon).toFixed(2),
+  });
+  return requestJson("current-weather", `/api/weather?${query}`);
+}
+
 export async function fetchBuildings({ bbox = null, lod = "standard" } = {}) {
   const query = !USE_MOCK && bbox
     ? `?${new URLSearchParams({ bbox: bbox.join(","), lod })}`
@@ -246,7 +277,7 @@ export async function fetchSunPositions() {
   return payload.positions ?? [];
 }
 
-export async function fetchRoutes({ origin, destination, departAt }) {
+export async function fetchRoutes({ origin, destination, departAt, mode = null }) {
   let payload;
   if (USE_MOCK) {
     const parts = timeParts(departAt);
@@ -263,13 +294,14 @@ export async function fetchRoutes({ origin, destination, departAt }) {
       hour,
       depart_at: departAt,
     });
+    if (mode) query.set("mode", mode);
     payload = await requestJson("routes", `/api/routes?${query}`);
   }
 
   return normalizeRoutes(payload, departAt);
 }
 
-export async function fetchExposure({ origin, destination }) {
+export async function fetchExposure({ origin, destination, departAt = null, mode = null }) {
   if (USE_MOCK) {
     return requestJson("exposure", "./mock/exposure.json", { cache: true });
   }
@@ -280,6 +312,8 @@ export async function fetchExposure({ origin, destination }) {
     end_lat: destination.lat,
     end_lon: destination.lon,
   });
+  if (departAt) query.set("depart_at", departAt);
+  if (mode) query.set("mode", mode);
   return requestJson("exposure", `/api/departure?${query}`);
 }
 

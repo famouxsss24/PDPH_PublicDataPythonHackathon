@@ -1,0 +1,61 @@
+name: repository checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.12"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install project and test tools
+        run: python -m pip install -e ".[dev]"
+
+      - name: Lint Python
+        run: python -m ruff check .
+
+      - name: Test Python
+        run: python -m pytest -q
+
+      - name: Check browser modules
+        run: >-
+          python -c "import pathlib, subprocess;
+          [subprocess.run(['node', '--check', str(path)], check=True)
+          for path in pathlib.Path('web/js').glob('*.js')]"
+
+      - name: Check Vercel functions
+        run: >-
+          python -c "import pathlib, subprocess;
+          [subprocess.run(['node', '--check', str(path)], check=True)
+          for path in pathlib.Path('api').glob('*.mjs')]"
+
+      - name: Verify tracked runtime data
+        run: >-
+          python -c "from api.main import api_health;
+          result = api_health();
+          assert result['status'] == 'ok';
+          assert result['buildings'] > 0;
+          assert result['route_graph']['nodes'] > 0;
+          assert result['cooling_shelters']['ready']"

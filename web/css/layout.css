@@ -280,7 +280,8 @@ body[data-phase="compare"] .search-stage {
 .route-legend {
   z-index: 650;
   right: 16px;
-  bottom: calc(24px + var(--safe-bottom));
+  /* Keep a dedicated row above MapLibre's two-line attribution. */
+  bottom: calc(64px + var(--safe-bottom));
 }
 
 .shadow-explorer {
@@ -431,6 +432,10 @@ body[data-phase="navigate"] .maplibregl-ctrl-bottom-right {
   transition: bottom 320ms var(--ease-out);
 }
 
+body[data-phase="navigate"][data-navigation-mode="preview"] .maplibregl-ctrl-bottom-right {
+  bottom: calc(196px + var(--safe-bottom));
+}
+
 body[data-theme="dark"] .journey-panel {
   border-color: rgba(182, 212, 202, 0.14);
   background: rgba(18, 25, 23, 0.98);
@@ -554,8 +559,9 @@ body[data-theme="dark"] .maplibregl-ctrl-attrib a {
   }
 
   .route-legend {
-    right: 8px;
-    bottom: calc(18px + var(--safe-bottom));
+    right: auto;
+    bottom: calc(60px + var(--safe-bottom));
+    left: 8px;
   }
 
   .shadow-explorer {
@@ -599,6 +605,16 @@ body[data-theme="dark"] .maplibregl-ctrl-attrib a {
 
   body[data-phase="navigate"] .maplibregl-ctrl-bottom-right {
     bottom: calc(122px + var(--safe-bottom));
+  }
+
+  body[data-phase="navigate"][data-navigation-mode="preview"] .maplibregl-ctrl-bottom-right {
+    bottom: calc(164px + var(--safe-bottom));
+  }
+
+  body.place-popup-open .map-tools,
+  body.place-popup-open .maplibregl-ctrl-top-right {
+    opacity: 0;
+    pointer-events: none;
   }
 
   body.nav-ui-idle .navigation-topbar {

@@ -3,6 +3,8 @@ const createInitialState = () => ({
   origin: null,
   destination: null,
   departAt: "now",
+  heatCareAccepted: false,
+  heatMode: "elder",
   routeData: null,
   selectedRouteId: null,
   exposure: null,
@@ -142,6 +144,36 @@ export const actions = Object.freeze({
 
   setExposure(exposure) {
     commit({ exposure }, "setExposure");
+  },
+
+  enableHeatCare() {
+    commit(
+      {
+        heatCareAccepted: true,
+        heatMode: "elder",
+        routeData: null,
+        selectedRouteId: null,
+        shadeData: null,
+        status: "loading",
+        error: null,
+      },
+      "enableHeatCare",
+    );
+  },
+
+  setHeatMode(heatMode) {
+    if (!new Set(["default", "elder"]).has(heatMode) || heatMode === state.heatMode) return;
+    commit(
+      {
+        heatMode,
+        routeData: null,
+        selectedRouteId: null,
+        shadeData: null,
+        status: "loading",
+        error: null,
+      },
+      "setHeatMode",
+    );
   },
 
   setShadeData(shadeData) {

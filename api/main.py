@@ -3,6 +3,8 @@
 import json
 import os
 from datetime import datetime, time
+from functools import lru_cache
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 import geopandas as gpd
@@ -15,8 +17,15 @@ from pydantic import BaseModel
 from shapely.geometry import box
 
 from gneulro.config import BETA_DEFAULT, CALC_DATE, CRS_WGS, HOURS, NOWON_BBOX, TZ
+from gneulro.cooling import SOURCE_DATASET_ID as COOLING_SOURCE_DATASET_ID
 from gneulro.departure import exposure_curve, recommend
 from gneulro.graph import load_graph, route_options, route_pair, shade_route_nodes
+from gneulro.heat import (
+    MODEL_VERSION as HEAT_MODEL_VERSION,
+    departure_heat_summary,
+    get_heat_mode,
+    route_heat_block,
+)
 from gneulro.places import (
     kakao_places,
     kakao_reverse,
@@ -29,6 +38,7 @@ from gneulro.places import (
 )
 from gneulro.shadowcast import sun_position
 from gneulro.store import Store
+from gneulro.weather import WeatherUnavailableError, current_weather
 
 app = FastAPI(title="그늘로 API", description="태양을 피하는 그늘 경로 내비게이션")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)  # 수 MB GeoJSON 압축
@@ -39,8 +49,10 @@ async def cache_policy(request, call_next):
     """프론트는 재검증하고, 불변에 가까운 3D 장면 데이터는 짧게 재사용한다."""
     response = await call_next(request)
     scene_paths = ("/api/buildings", "/api/shade_frame", "/api/shade_frames", "/api/sun_positions")
-    if request.url.path.startswith(scene_paths):
+    if response.status_code == 200 and request.url.path.startswith(scene_paths):
         response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+    elif response.status_code == 200 and request.url.path == "/api/weather":
+        response.headers["Cache-Control"] = "public, max-age=300, stale-while-revalidate=600"
     elif not request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
@@ -105,6 +117,23 @@ def _check_hour(hour: int) -> None:
     """hour가 사전계산 시간대가 아니면 422를 낸다."""
     if hour not in HOURS:
         raise HTTPException(422, detail=f"hour는 {HOURS} 중 하나여야 합니다.")
+
+
+def _validate_nowon_point(lat: float, lon: float, label: str = "위치") -> None:
+    """Reject non-finite or out-of-scope coordinates before graph snapping."""
+    west, south, east, north = NOWON_BBOX
+    if not (isfinite(lat) and isfinite(lon) and west <= lon <= east and south <= lat <= north):
+        raise HTTPException(422, detail=f"{label}는 노원구 안에서 선택해주세요.")
+
+
+def _validate_route_points(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> None:
+    _validate_nowon_point(start_lat, start_lon, "출발지")
+    _validate_nowon_point(end_lat, end_lon, "도착지")
 
 
 def _parse_depart_at(depart_at: str | None, fallback_hour: int) -> float:
@@ -175,6 +204,29 @@ def api_grid(hour: int = 14) -> dict:
     return _grid_geojson(hour)
 
 
+@app.get("/api/cooling_spots")
+def api_cooling_spots(bbox: str | None = None) -> dict:
+    """노원구 공식 무더위쉼터를 접근 제한·출처와 함께 GeoJSON으로 반환한다."""
+    _require_live_data()
+    bounds = _parse_bbox(bbox)
+    try:
+        if bounds:
+            return _viewport_geojson("cooling_spots", bounds, simplify_m=0.0)
+        if "cooling_spots" not in _static_cache:
+            _static_cache["cooling_spots"] = store.layer_geojson(
+                "cooling_spots", simplify_m=0.0
+            )
+        return _static_cache["cooling_spots"]
+    except Exception:
+        raise HTTPException(
+            503,
+            detail=(
+                "공식 무더위쉼터 산출물이 없습니다. "
+                "pipeline/13_cooling_spots.py를 실행하세요."
+            ),
+        ) from None
+
+
 @app.get("/api/route", response_model=RouteResponse)
 def api_route(
     start_lat: float,
@@ -185,6 +237,7 @@ def api_route(
     beta: float = BETA_DEFAULT,
 ):
     """최단경로와 그늘경로를 함께 계산해 비교 통계와 좌표를 반환한다."""
+    _validate_route_points(start_lat, start_lon, end_lat, end_lon)
     _check_hour(hour)
     try:
         result = route_pair(G, (start_lat, start_lon), (end_lat, end_lon), hour, beta)
@@ -220,16 +273,13 @@ def _parse_bbox(bbox_text: str | None) -> tuple[float, float, float, float] | No
     return clipped
 
 
-def _viewport_geojson(
+@lru_cache(maxsize=16)
+def _cached_viewport_geojson(
     name: str,
     bounds: tuple[float, float, float, float],
     simplify_m: float,
     property_filter: tuple[str, object] | None = None,
 ) -> dict:
-    filter_key = f":{property_filter[0]}={property_filter[1]}" if property_filter else ""
-    key = f"{name}:{','.join(f'{value:.4f}' for value in bounds)}:{simplify_m}{filter_key}"
-    if key in _static_cache:
-        return _static_cache[key]
     if name not in _static_layers:
         _static_layers[name] = store.load_layer(name)
     layer = _static_layers[name]
@@ -240,8 +290,18 @@ def _viewport_geojson(
     subset = layer[layer.intersects(clip_geometry)].copy()
     subset.geometry = subset.geometry.intersection(clip_geometry)
     subset = subset[~subset.geometry.is_empty]
-    _static_cache[key] = store.to_geojson(subset, simplify_m=simplify_m)
-    return _static_cache[key]
+    return store.to_geojson(subset, simplify_m=simplify_m)
+
+
+def _viewport_geojson(
+    name: str,
+    bounds: tuple[float, float, float, float],
+    simplify_m: float,
+    property_filter: tuple[str, object] | None = None,
+) -> dict:
+    """Return one rounded viewport while bounding decoded GeoJSON memory."""
+    rounded_bounds = tuple(round(value, 4) for value in bounds)
+    return _cached_viewport_geojson(name, rounded_bounds, simplify_m, property_filter)
 
 
 @app.get("/api/buildings")
@@ -250,7 +310,7 @@ def api_buildings(bbox: str | None = None, lod: str = "standard") -> dict:
     _require_live_data()
     bounds = _parse_bbox(bbox)
     if bounds:
-        return _viewport_geojson("buildings", bounds, 2.5 if lod == "mobile" else 1.0)
+        return _viewport_geojson("buildings", bounds, 5.0 if lod == "mobile" else 1.0)
     if "buildings" not in _static_cache:
         _static_cache["buildings"] = store.layer_geojson("buildings", simplify_m=1.0)
     return _static_cache["buildings"]
@@ -263,7 +323,7 @@ def api_shade_frames(bbox: str | None = None, lod: str = "standard") -> dict:
     bounds = _parse_bbox(bbox)
     if bounds:
         try:
-            return _viewport_geojson("shadows_anim", bounds, 4.5 if lod == "mobile" else 2.5)
+            return _viewport_geojson("shadows_anim", bounds, 8.0 if lod == "mobile" else 2.5)
         except Exception:
             raise HTTPException(
                 503, detail="그림자 프레임이 아직 없습니다. pipeline/09_shadow_frames.py를 실행하세요."
@@ -290,7 +350,7 @@ def api_shade_frame(hour: int = 14, bbox: str | None = None, lod: str = "standar
             frame = _viewport_geojson(
                 "shadows_anim",
                 bounds,
-                4.5 if lod == "mobile" else 2.5,
+                8.0 if lod == "mobile" else 2.5,
                 property_filter=("hour", hour),
             )
         except Exception:
@@ -320,6 +380,23 @@ def api_health() -> dict:
             "live_api_ready": False,
             "detail": "Tracked browser snapshot is ready; live pipeline artifacts are not installed.",
         }
+    try:
+        cooling_spots = store.load_layer("cooling_spots")
+        cooling_status = {
+            "ready": True,
+            "count": int(len(cooling_spots)),
+            "public": int(cooling_spots["access_scope"].eq("public").sum()),
+            "restricted": int(cooling_spots["access_scope"].eq("restricted").sum()),
+            "source_dataset_id": COOLING_SOURCE_DATASET_ID,
+        }
+    except Exception:
+        cooling_status = {
+            "ready": False,
+            "count": 0,
+            "public": 0,
+            "restricted": 0,
+            "source_dataset_id": COOLING_SOURCE_DATASET_ID,
+        }
     return {
         "status": "ok",
         "buildings": int(len(store.load_layer("buildings"))),
@@ -331,7 +408,29 @@ def api_health() -> dict:
             "kakao": _kakao_status,
             "last_error": _kakao_last_error,
         },
+        "cooling_shelters": cooling_status,
+        "heat_care": {
+            "ready": cooling_status["ready"],
+            "model": HEAT_MODEL_VERSION,
+            "modes": ["default", "elder"],
+            "medical_safety_standard": False,
+        },
+        "weather": {
+            "provider": "Open-Meteo",
+            "current_apparent_temperature": True,
+            "requires_key": False,
+        },
     }
+
+
+@app.get("/api/weather")
+def api_weather(lat: float = 37.654, lon: float = 127.0567) -> dict:
+    """Return current weather and the conditional outdoor-deferral decision."""
+    _validate_nowon_point(lat, lon)
+    try:
+        return current_weather(lat, lon)
+    except WeatherUnavailableError as exc:
+        raise HTTPException(503, detail=str(exc)) from None
 
 
 @app.get("/api/sun_positions")
@@ -386,9 +485,7 @@ def api_places(q: str = "") -> dict:
 @app.get("/api/reverse")
 def api_reverse(lat: float, lon: float) -> dict:
     """지도 클릭 좌표를 건물명·장소명 또는 주소로 바꾼다."""
-    west, south, east, north = NOWON_BBOX
-    if not (west <= lon <= east and south <= lat <= north):
-        raise HTTPException(422, detail="노원구 안의 위치를 선택해주세요.")
+    _validate_nowon_point(lat, lon)
     if _kakao_key:
         try:
             result = kakao_reverse(lat, lon, _kakao_key)
@@ -405,9 +502,7 @@ def api_reverse(lat: float, lon: float) -> dict:
 @app.get("/api/nearby")
 def api_nearby(lat: float, lon: float, radius_m: int = 240, limit: int = 7) -> dict:
     """도보 안내 위치 주변의 이름 있는 건물·시설 라벨을 반환한다."""
-    west, south, east, north = NOWON_BBOX
-    if not (west <= lon <= east and south <= lat <= north):
-        raise HTTPException(422, detail="노원구 안의 위치를 선택해주세요.")
+    _validate_nowon_point(lat, lon)
     radius = max(80, min(radius_m, 400))
     result_limit = max(1, min(limit, 10))
     return {"results": nearby_places(lat, lon, _places, radius, result_limit)}
@@ -421,29 +516,76 @@ def api_routes(
     end_lon: float,
     hour: int = 14,
     depart_at: str | None = None,
+    mode: str | None = None,
 ) -> dict:
     """최단 + 그늘 등급별(40/60/80%+) 경로 목록과 추천 경로를 반환한다."""
     _require_live_data()
+    _validate_route_points(start_lat, start_lon, end_lat, end_lon)
     route_hour = _parse_depart_at(depart_at, hour)
+    if mode is not None:
+        try:
+            get_heat_mode(mode)
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from None
     try:
-        result = route_options(G, (start_lat, start_lon), (end_lat, end_lon), route_hour)
+        result = route_options(
+            G,
+            (start_lat, start_lon),
+            (end_lat, end_lon),
+            route_hour,
+            include_nodes=mode is not None,
+        )
     except nx.NetworkXNoPath:
         raise HTTPException(404, detail="두 지점을 잇는 보행 경로를 찾지 못했습니다.") from None
     except nx.NodeNotFound:
         raise HTTPException(404, detail="출발/도착 지점을 도로망에 연결하지 못했습니다.") from None
+    if mode is not None:
+        try:
+            cooling_spots = store.load_layer("cooling_spots")
+        except Exception:
+            raise HTTPException(
+                503,
+                detail=(
+                    "폭염 보행 모드에 필요한 공식 쉼터 산출물이 없습니다. "
+                    "pipeline/13_cooling_spots.py를 실행하세요."
+                ),
+            ) from None
+        for route in result["routes"]:
+            nodes = route.pop("_nodes")
+            route["heat"] = route_heat_block(
+                G,
+                nodes,
+                route_hour,
+                mode,
+                cooling_spots,
+            )
     return {"hour": route_hour, "depart_at_used": depart_at or f"{hour:02d}:00", **result}
 
 
 @app.get("/api/departure")
-def api_departure(start_lat: float, start_lon: float, end_lat: float, end_lon: float) -> dict:
+def api_departure(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+    mode: str | None = None,
+    depart_at: str | None = None,
+) -> dict:
     """14시 그늘경로를 고정한 뒤 시간대별 노출량 곡선과 추천 출발시각을 반환한다."""
     _require_live_data()
+    _validate_route_points(start_lat, start_lon, end_lat, end_lon)
     try:
         nodes = shade_route_nodes(G, (start_lat, start_lon), (end_lat, end_lon))
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         raise HTTPException(404, detail="경로를 찾지 못해 출발시각을 추천할 수 없습니다.") from None
     curve = exposure_curve(G, nodes)
-    return {"curve": curve, **recommend(curve)}
+    if mode is None:
+        return {"curve": curve, **recommend(curve)}
+    reference_hour = _parse_depart_at(depart_at, 14)
+    try:
+        return departure_heat_summary(G, nodes, curve, mode, reference_hour)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from None
 
 
 # 정적 파일은 라우터 정의 '뒤에' 마운트해야 /api/* 가 먼저 매칭된다 (SPEC §7)

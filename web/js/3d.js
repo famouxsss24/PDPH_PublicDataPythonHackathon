@@ -5,9 +5,12 @@ import { initTheme } from "./theme.js";
 
 const query = new URLSearchParams(window.location.search);
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
-const LOW_POWER = window.matchMedia("(max-width: 700px)").matches
+const requestedQuality = query.get("quality");
+const LOW_POWER = requestedQuality === "low" || (requestedQuality !== "high" && (
+  window.matchMedia("(max-width: 700px)").matches
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
-  || (navigator.deviceMemory && navigator.deviceMemory <= 4);
+  || (navigator.deviceMemory && navigator.deviceMemory <= 4)
+));
 const FRAME_INTERVAL = LOW_POWER ? 50 : 30;
 const parsePoint = (value) => {
   const [lat, lon] = (value ?? "").split(",").map(Number);
@@ -41,8 +44,14 @@ let playTimer = null;
 let frameHours = [];
 let sunPositions = [];
 let runnerCoordinates = [];
+let selectedRouteBounds = null;
 let sceneTheme = "dark";
 let lastRunnerUpdate = 0;
+let shadowFramesReady = false;
+let shadowFramesPromise = null;
+let loadedBuildingCount = 0;
+let loadedLowPowerFrameHour = null;
+let lowPowerFrameToken = 0;
 
 refreshIcons();
 elements.play.disabled = true;
@@ -87,16 +96,17 @@ function fetchAllShadowFrames() {
   return fetchSceneJson(`/api/shade_frames?${params}`, "그림자 프레임을 불러오지 못했습니다.");
 }
 
-async function fetchInitialShadowFrame() {
+async function fetchShadowFrame(hour) {
+  const requestedHour = Math.max(7, Math.min(18, Math.round(hour)));
   if (USE_MOCK) {
     const frames = await fetchAllShadowFrames();
     return {
       type: "FeatureCollection",
-      features: frames.features.filter((feature) => feature.properties.hour === initialFrameHour),
+      features: frames.features.filter((feature) => feature.properties.hour === requestedHour),
     };
   }
   const params = new URLSearchParams({
-    hour: String(initialFrameHour),
+    hour: String(requestedHour),
     bbox: sceneBounds.join(","),
     lod: sceneLod,
   });
@@ -130,7 +140,7 @@ async function fetchSelectedRoute() {
 
 // Start scene I/O before the base map finishes loading so network waits overlap.
 const buildingsPromise = fetchBuildings({ bbox: sceneBounds, lod: sceneLod });
-const initialShadowPromise = fetchInitialShadowFrame();
+const initialShadowPromise = fetchShadowFrame(initialFrameHour);
 const sunPositionsPromise = fetchSunPositions().catch(() => []);
 const selectedRoutePromise = fetchSelectedRoute();
 
@@ -180,7 +190,7 @@ function updateSun(hour) {
   const hourValue = Math.floor(totalMinutes / 60);
   const minuteValue = totalMinutes % 60;
   elements.clock.textContent = `${String(hourValue).padStart(2, "0")}:${String(minuteValue).padStart(2, "0")}`;
-  elements.sunMeta.textContent = `8월 6일 · 태양 고도 ${sun.altitude.toFixed(1)}° · ${directionName(sun.azimuth)} ${sun.azimuth.toFixed(0)}°`;
+  elements.sunMeta.textContent = `태양 고도 ${sun.altitude.toFixed(1)}° · ${directionName(sun.azimuth)} ${sun.azimuth.toFixed(0)}°`;
   elements.compass.style.setProperty("--sun-azimuth", `${sun.azimuth}deg`);
   if (typeof map.setLight === "function") {
     try {
@@ -219,8 +229,30 @@ function setShadowLayers(hour) {
   }
 }
 
+async function transitionLowPowerHour(nextHour) {
+  const requestedHour = Math.max(7, Math.min(18, Math.round(nextHour)));
+  const token = ++lowPowerFrameToken;
+  currentHour = requestedHour;
+  elements.range.value = String(requestedHour);
+  updateSun(requestedHour);
+  if (loadedLowPowerFrameHour === requestedHour) return;
+
+  elements.status.textContent = `건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · ${requestedHour}:00 그림자 불러오는 중`;
+  try {
+    const frame = await fetchShadowFrame(requestedHour);
+    if (token !== lowPowerFrameToken) return;
+    map.getSource("shadow-initial")?.setData(frame);
+    loadedLowPowerFrameHour = requestedHour;
+    elements.status.textContent = `건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · 그림자 ${requestedHour}:00`;
+  } catch (error) {
+    console.warn(`${requestedHour}:00 그림자를 표시하지 못했습니다.`, error);
+    elements.status.textContent = `건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · 현재 시각 그림자`;
+  }
+}
+
 function transitionToHour(nextHour, { animate = true } = {}) {
   if (!frameHours.length || nextHour < frameHours[0] || nextHour > frameHours.at(-1)) return Promise.resolve();
+  if (LOW_POWER && !shadowFramesReady) return transitionLowPowerHour(nextHour);
   const token = ++transitionToken;
   const previousHour = currentHour;
   currentHour = nextHour;
@@ -252,13 +284,19 @@ async function playNext() {
   if (!playing || !frameHours.length) return;
   const next = currentHour >= frameHours.at(-1)
     ? frameHours[0]
-    : Math.round((currentHour + 0.25) * 4) / 4;
+    : LOW_POWER ? currentHour + 1 : Math.round((currentHour + 0.25) * 4) / 4;
   await transitionToHour(next);
   if (!playing) return;
-  playTimer = window.setTimeout(playNext, LOW_POWER ? 240 : 170);
+  playTimer = window.setTimeout(playNext, LOW_POWER ? 500 : 170);
 }
 
-function togglePlay() {
+async function togglePlay() {
+  if (!LOW_POWER && !shadowFramesReady) {
+    elements.play.disabled = true;
+    const ready = await ensureAllShadowFrames();
+    elements.play.disabled = false;
+    if (!ready) return;
+  }
   if (!frameHours.length) return;
   playing = !playing;
   window.clearTimeout(playTimer);
@@ -389,6 +427,26 @@ function applySceneTheme(theme) {
   if (frameHours.length) setShadowLayers(currentHour);
 }
 
+function fitSelectedRoute({ animate = true } = {}) {
+  if (!selectedRouteBounds) return;
+  const compact = window.innerWidth <= 700;
+  const panelBottom = document.querySelector(".scene-panel")?.getBoundingClientRect().bottom ?? 292;
+  const remainingHeight = Math.max(120, window.innerHeight - panelBottom);
+  map.fitBounds(selectedRouteBounds, {
+    padding: compact
+      ? {
+        top: Math.ceil(panelBottom + 16),
+        right: 32,
+        bottom: Math.min(120, Math.floor(remainingHeight * 0.35)),
+        left: 32,
+      }
+      : { top: 76, right: 240, bottom: 76, left: 390 },
+    pitch: 66,
+    bearing: -22,
+    duration: animate && !REDUCED_MOTION.matches ? 1200 : 0,
+  });
+}
+
 async function drawRoute() {
   const route = await selectedRoutePromise;
   if (!route) return;
@@ -439,18 +497,11 @@ async function drawRoute() {
   revealRoute(route);
   addMarker(origin, "#16805d");
   addMarker(destination, "#f27d32");
-  const bounds = runnerCoordinates.reduce(
+  selectedRouteBounds = runnerCoordinates.reduce(
     (box, coordinate) => box.extend(coordinate),
     new window.maplibregl.LngLatBounds(runnerCoordinates[0], runnerCoordinates[0]),
   );
-  map.fitBounds(bounds, {
-    padding: window.innerWidth <= 700
-      ? { top: 310, right: 36, bottom: 170, left: 36 }
-      : { top: 76, right: 240, bottom: 76, left: 390 },
-    pitch: 66,
-    bearing: -22,
-    duration: REDUCED_MOTION.matches ? 0 : 1200,
-  });
+  fitSelectedRoute();
   elements.evidence.hidden = false;
   elements.evidence.innerHTML = `<strong>선택 경로</strong>${route.time_min ?? route.minutes}분 · ${Math.round(route.dist_m ?? route.distance_m)}m · 그늘 ${route.shade_pct}%`;
 }
@@ -484,6 +535,7 @@ function installBuildings(buildings, before) {
 
 function installInitialShadow(frames) {
   frameHours = [initialFrameHour];
+  loadedLowPowerFrameHour = initialFrameHour;
   map.addSource("shadow-initial", { type: "geojson", data: frames });
   map.addLayer({
     id: "shade-initial",
@@ -537,16 +589,40 @@ function bindBuildingInspection() {
   });
 }
 
+async function ensureAllShadowFrames() {
+  if (shadowFramesReady) return true;
+  if (!shadowFramesPromise) {
+    elements.status.textContent = `건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · 시간별 그림자 불러오는 중`;
+    shadowFramesPromise = (async () => {
+      try {
+        const frames = await fetchAllShadowFrames();
+        installAllShadowFrames(frames);
+        shadowFramesReady = true;
+        elements.status.textContent = `${USE_MOCK ? "데모 · " : ""}건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · 그림자 ${frameHours.length}개 시각`;
+        return true;
+      } catch (error) {
+        console.warn("시간별 그림자 애니메이션을 준비하지 못했습니다.", error);
+        elements.status.textContent = `건물 ${loadedBuildingCount.toLocaleString("ko-KR")}동 · 현재 시각 그림자`;
+        shadowFramesPromise = null;
+        return false;
+      }
+    })();
+  }
+  return shadowFramesPromise;
+}
+
 function scheduleShadowAnimation(buildingCount) {
-  const load = async () => {
-    try {
-      const frames = await fetchAllShadowFrames();
-      installAllShadowFrames(frames);
-      elements.status.textContent = `${USE_MOCK ? "데모 · " : ""}건물 ${buildingCount.toLocaleString("ko-KR")}동 · 그림자 ${frameHours.length}개 시각`;
-    } catch (error) {
-      console.warn("시간별 그림자 애니메이션을 준비하지 못했습니다.", error);
-      elements.status.textContent = `건물 ${buildingCount.toLocaleString("ko-KR")}동 · 현재 시각 그림자`;
-    }
+  loadedBuildingCount = buildingCount;
+  if (LOW_POWER) {
+    frameHours = Array.from({ length: 12 }, (_, index) => index + 7);
+    elements.range.step = "1";
+    elements.range.disabled = false;
+    elements.play.disabled = false;
+    elements.status.textContent = `건물 ${buildingCount.toLocaleString("ko-KR")}동 · 그림자 ${initialFrameHour}:00`;
+    return;
+  }
+  const load = () => {
+    void ensureAllShadowFrames();
   };
   if ("requestIdleCallback" in window) window.requestIdleCallback(load, { timeout: 500 });
   else window.setTimeout(load, 80);
@@ -577,9 +653,18 @@ map.on("load", async () => {
   }
 });
 
-elements.range.addEventListener("input", () => {
+elements.range.addEventListener("input", async () => {
   if (playing) togglePlay();
-  transitionToHour(Number(elements.range.value));
+  const requestedHour = Number(elements.range.value);
+  if (!LOW_POWER && !shadowFramesReady) {
+    elements.range.disabled = true;
+    elements.play.disabled = true;
+    const ready = await ensureAllShadowFrames();
+    elements.range.disabled = false;
+    elements.play.disabled = false;
+    if (!ready) return;
+  }
+  transitionToHour(requestedHour);
 });
 elements.play.addEventListener("click", togglePlay);
 elements.orbit.addEventListener("click", toggleOrbit);
@@ -604,5 +689,17 @@ const updatePanelBottom = () => {
   map.resize();
 };
 new ResizeObserver(updatePanelBottom).observe(scenePanel);
-window.addEventListener("resize", updatePanelBottom);
+let resizeTimer = null;
+let lastViewport = { width: window.innerWidth, height: window.innerHeight };
+window.addEventListener("resize", () => {
+  updatePanelBottom();
+  window.clearTimeout(resizeTimer);
+  resizeTimer = window.setTimeout(() => {
+    const crossedLayoutBreakpoint = (lastViewport.width <= 700) !== (window.innerWidth <= 700);
+    const changedOrientation = Math.abs(lastViewport.width - window.innerWidth) > 100
+      && Math.abs(lastViewport.height - window.innerHeight) > 100;
+    lastViewport = { width: window.innerWidth, height: window.innerHeight };
+    if (crossedLayoutBreakpoint || changedOrientation) fitSelectedRoute({ animate: false });
+  }, 120);
+});
 updatePanelBottom();

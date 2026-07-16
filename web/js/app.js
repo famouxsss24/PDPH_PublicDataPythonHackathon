@@ -24,6 +24,7 @@ import { initNavigation } from "./navigation.js";
 import { refreshIcons } from "./icons.js";
 import { initShade } from "./shade.js";
 import { initTheme } from "./theme.js";
+import { initHeatCare } from "./heat-care.js";
 
 const elements = {};
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -44,7 +45,12 @@ function showToast(message, isError = false) {
 async function requestRoutes() {
   const state = getState();
   if (!state.origin || !state.destination) return;
-  const requestContext = { origin: state.origin, destination: state.destination, departAt: state.departAt };
+  const requestContext = {
+    origin: state.origin,
+    destination: state.destination,
+    departAt: state.departAt,
+    mode: state.heatCareAccepted ? state.heatMode : null,
+  };
   actions.setLoading();
   startRouteCalculation(requestContext.origin, requestContext.destination);
 
@@ -140,7 +146,9 @@ function renderShell(state, actionName) {
   elements.loading.hidden = !isLoading;
   elements.compare.hidden = isLoading;
   elements.navigation.hidden = !isNavigate;
+  const route = state.routeData?.options.find((item) => item.id === state.selectedRouteId);
   elements.legend.hidden = !state.routeData || isLoading || isNavigate || state.shadowExploreOpen;
+  elements.coolingLegend.hidden = !route?.heat?.stops?.length;
   elements.night.hidden = !state.routeData?.meta?.night;
 
   if (state.destination) {
@@ -153,7 +161,6 @@ function renderShell(state, actionName) {
     setPickingMode(null);
   }
 
-  const route = state.routeData?.options.find((item) => item.id === state.selectedRouteId);
   const threeParams = new URLSearchParams({ hour: String(state.shadowExploreHour) });
   if (state.origin && state.destination) {
     threeParams.set("from", `${state.origin.lat},${state.origin.lon}`);
@@ -223,6 +230,7 @@ function init() {
   elements.compare = document.querySelector("#compareView");
   elements.navigation = document.querySelector("#navigationView");
   elements.legend = document.querySelector("#routeLegend");
+  elements.coolingLegend = document.querySelector("#coolingLegend");
   elements.night = document.querySelector("#nightNotice");
   elements.heading = document.querySelector("#routeHeading");
   elements.navigationDestination = document.querySelector("#navigationDestination");
@@ -234,13 +242,17 @@ function init() {
   elements.open3dGlobal = document.querySelector("#open3dGlobal");
   elements.theme = document.querySelector("#themeToggle");
   elements.dataBadge = document.querySelector(".data-badge");
-  elements.dataBadge.textContent = USE_MOCK ? "실데이터 스냅샷" : "8월 6일 시뮬레이션";
+  elements.dataBadge.textContent = USE_MOCK ? "실데이터 스냅샷" : "맑은 하늘 기준";
 
   refreshIcons();
   initMap({ onMapPick: handlePlacePick, onError: (message) => showToast(message, true) });
   initTheme({ button: elements.theme, fallback: "light", onChange: setMapTheme });
   initSearch({ onSelect: handlePlacePick, onPick: beginMapPick, onClear: clearEndpoint });
   initRoutes();
+  initHeatCare({
+    onRefresh: requestRoutes,
+    onReviewTime: () => document.querySelector("#departTimeButton").click(),
+  });
   initTime({
     onSelect: (departAt) => {
       if (departAt === getState().departAt) return;

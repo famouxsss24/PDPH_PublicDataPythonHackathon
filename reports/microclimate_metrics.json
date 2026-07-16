@@ -1,0 +1,234 @@
+{
+  "model_version": "sdot_relative_temperature_hgb_v1",
+  "target": "sensor temperature - same-hour Nowon sensor median",
+  "baseline": "same_time_nowon_median",
+  "validation": "GroupKFold by sensor_id",
+  "gate": {
+    "minimum_mean_fold_improvement_pct": 5.0,
+    "requires_majority_folds_improved": true
+  },
+  "selected_candidate": "v1_shade_time",
+  "eligible_for_product": false,
+  "candidates": {
+    "v1_shade_time": {
+      "features": [
+        "shade_ratio",
+        "hour_sin",
+        "hour_cos"
+      ],
+      "baseline_mae_c": 0.7232,
+      "model_mae_c": 0.9605,
+      "aggregate_improvement_pct": -32.82,
+      "mean_fold_improvement_pct": -35.58,
+      "improved_folds": 0,
+      "n_folds": 5,
+      "folds": [
+        {
+          "fold": 1,
+          "test_sensors": [
+            "OC3CL200049",
+            "V02Q1940146",
+            "V02Q1940157",
+            "V02Q1940238",
+            "V02Q1940281",
+            "V02Q1940950"
+          ],
+          "n_train": 6671,
+          "n_test": 1638,
+          "baseline_mae_c": 0.6643,
+          "model_mae_c": 1.1323,
+          "improvement_pct": -70.45,
+          "improved": false
+        },
+        {
+          "fold": 2,
+          "test_sensors": [
+            "OC3CL200213",
+            "V02Q1940132",
+            "V02Q1940155",
+            "V02Q1940226",
+            "V02Q1940275",
+            "V02Q1940885"
+          ],
+          "n_train": 6672,
+          "n_test": 1637,
+          "baseline_mae_c": 0.602,
+          "model_mae_c": 0.8131,
+          "improvement_pct": -35.06,
+          "improved": false
+        },
+        {
+          "fold": 3,
+          "test_sensors": [
+            "OC3CL200160",
+            "V02Q1940128",
+            "V02Q1940154",
+            "V02Q1940216",
+            "V02Q1940267",
+            "V02Q1940299"
+          ],
+          "n_train": 6677,
+          "n_test": 1632,
+          "baseline_mae_c": 0.7294,
+          "model_mae_c": 0.8715,
+          "improvement_pct": -19.47,
+          "improved": false
+        },
+        {
+          "fold": 4,
+          "test_sensors": [
+            "V02Q1940076",
+            "V02Q1940151",
+            "V02Q1940153",
+            "V02Q1940215",
+            "V02Q1940266",
+            "V02Q1940290",
+            "V02Q1940298"
+          ],
+          "n_train": 6608,
+          "n_test": 1701,
+          "baseline_mae_c": 1.1532,
+          "model_mae_c": 1.3624,
+          "improvement_pct": -18.14,
+          "improved": false
+        },
+        {
+          "fold": 5,
+          "test_sensors": [
+            "OC3CL200144",
+            "OC3CL200206",
+            "V02Q1940075",
+            "V02Q1940150",
+            "V02Q1940183",
+            "V02Q1940245",
+            "V02Q1940291"
+          ],
+          "n_train": 6608,
+          "n_test": 1701,
+          "baseline_mae_c": 0.4604,
+          "model_mae_c": 0.6205,
+          "improvement_pct": -34.76,
+          "improved": false
+        }
+      ]
+    },
+    "v2_urban_form": {
+      "features": [
+        "shade_ratio",
+        "hour_sin",
+        "hour_cos",
+        "building_coverage",
+        "building_height_mean",
+        "tree_density_ha"
+      ],
+      "baseline_mae_c": 0.7232,
+      "model_mae_c": 0.962,
+      "aggregate_improvement_pct": -33.03,
+      "mean_fold_improvement_pct": -37.34,
+      "improved_folds": 0,
+      "n_folds": 5,
+      "folds": [
+        {
+          "fold": 1,
+          "test_sensors": [
+            "OC3CL200049",
+            "V02Q1940146",
+            "V02Q1940157",
+            "V02Q1940238",
+            "V02Q1940281",
+            "V02Q1940950"
+          ],
+          "n_train": 6671,
+          "n_test": 1638,
+          "baseline_mae_c": 0.6643,
+          "model_mae_c": 0.8759,
+          "improvement_pct": -31.85,
+          "improved": false
+        },
+        {
+          "fold": 2,
+          "test_sensors": [
+            "OC3CL200213",
+            "V02Q1940132",
+            "V02Q1940155",
+            "V02Q1940226",
+            "V02Q1940275",
+            "V02Q1940885"
+          ],
+          "n_train": 6672,
+          "n_test": 1637,
+          "baseline_mae_c": 0.602,
+          "model_mae_c": 0.8767,
+          "improvement_pct": -45.63,
+          "improved": false
+        },
+        {
+          "fold": 3,
+          "test_sensors": [
+            "OC3CL200160",
+            "V02Q1940128",
+            "V02Q1940154",
+            "V02Q1940216",
+            "V02Q1940267",
+            "V02Q1940299"
+          ],
+          "n_train": 6677,
+          "n_test": 1632,
+          "baseline_mae_c": 0.7294,
+          "model_mae_c": 1.0178,
+          "improvement_pct": -39.53,
+          "improved": false
+        },
+        {
+          "fold": 4,
+          "test_sensors": [
+            "V02Q1940076",
+            "V02Q1940151",
+            "V02Q1940153",
+            "V02Q1940215",
+            "V02Q1940266",
+            "V02Q1940290",
+            "V02Q1940298"
+          ],
+          "n_train": 6608,
+          "n_test": 1701,
+          "baseline_mae_c": 1.1532,
+          "model_mae_c": 1.3213,
+          "improvement_pct": -14.58,
+          "improved": false
+        },
+        {
+          "fold": 5,
+          "test_sensors": [
+            "OC3CL200144",
+            "OC3CL200206",
+            "V02Q1940075",
+            "V02Q1940150",
+            "V02Q1940183",
+            "V02Q1940245",
+            "V02Q1940291"
+          ],
+          "n_train": 6608,
+          "n_test": 1701,
+          "baseline_mae_c": 0.4604,
+          "model_mae_c": 0.7142,
+          "improvement_pct": -55.11,
+          "improved": false
+        }
+      ]
+    }
+  },
+  "data": {
+    "source_period_start": "2026-06-15T07:00:00",
+    "source_period_end": "2026-07-05T19:00:00",
+    "hours": [
+      7,
+      19
+    ],
+    "matched_sensors": 32,
+    "training_rows": 8309,
+    "max_abs_delta_c": 8.0,
+    "shade_source": "2026-08-06 clear-sky physical simulation",
+    "temperature_source": "S-DoT observations"
+  }
+}

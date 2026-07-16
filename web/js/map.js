@@ -136,8 +136,33 @@ function selectedRoute(state) {
   return state.routeData?.options.find((route) => route.id === state.selectedRouteId) ?? null;
 }
 
+function coolingStopCollection(state) {
+  const stops = selectedRoute(state)?.heat?.stops ?? [];
+  return {
+    type: "FeatureCollection",
+    features: stops.map((stop) => ({
+      type: "Feature",
+      properties: {
+        spot_id: stop.spot_id,
+        name: stop.name,
+        address: stop.address,
+        facility_type: stop.facility_type,
+        distance_from_route_m: stop.distance_from_route_m,
+        availability: stop.availability,
+        source: stop.source,
+        source_url: stop.source_url,
+      },
+      geometry: { type: "Point", coordinates: [stop.lon, stop.lat] },
+    })),
+  };
+}
+
 function renderEndpoints(state) {
   setSourceData("route-endpoints", endpointCollection(state));
+}
+
+function renderCoolingStops(state) {
+  setSourceData("cooling-stops", coolingStopCollection(state));
 }
 
 function renderRouteAtProgress(state, progress) {
@@ -306,6 +331,7 @@ function sceneForAction(state, actionName) {
 function render(state, actionName) {
   lastState = state;
   if (!ready) return;
+  renderCoolingStops(state);
   if (["setDestination", "setOrigin", "swapEndpoints", "clearEndpoint", "resetAll"].includes(actionName)) {
     renderEndpoints(state);
   }
@@ -334,6 +360,7 @@ function addCoreLayers() {
     "route-alternatives",
     "route-selected",
     "route-pulse",
+    "cooling-stops",
     "route-endpoints",
     "navigation-point",
     "calculation-line",
@@ -391,6 +418,41 @@ function addCoreLayers() {
       "circle-stroke-width": 2,
       "circle-opacity": 0.9,
     },
+  });
+  map.addLayer({
+    id: "cooling-stop-halo",
+    type: "circle",
+    source: "cooling-stops",
+    paint: {
+      "circle-radius": 13,
+      "circle-color": "#ffffff",
+      "circle-opacity": 0.94,
+      "circle-stroke-color": "#167958",
+      "circle-stroke-width": 1,
+    },
+  });
+  map.addLayer({
+    id: "cooling-stop-dot",
+    type: "circle",
+    source: "cooling-stops",
+    paint: {
+      "circle-radius": 9,
+      "circle-color": "#167958",
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": 1.5,
+    },
+  });
+  map.addLayer({
+    id: "cooling-stop-symbol",
+    type: "symbol",
+    source: "cooling-stops",
+    layout: {
+      "text-field": "+",
+      "text-size": 17,
+      "text-allow-overlap": true,
+      "text-ignore-placement": true,
+    },
+    paint: { "text-color": "#ffffff" },
   });
 
   map.addLayer({
@@ -459,8 +521,14 @@ function addCoreLayers() {
     const routeId = event.features?.[0]?.properties?.routeId;
     if (routeId) actions.selectRoute(routeId);
   });
+  map.on("click", "cooling-stop-dot", (event) => {
+    const feature = event.features?.[0];
+    if (feature) showCoolingPopup(feature);
+  });
   map.on("mouseenter", "route-alternatives-line", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "route-alternatives-line", () => { map.getCanvas().style.cursor = pickMode ? "crosshair" : ""; });
+  map.on("mouseenter", "cooling-stop-dot", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "cooling-stop-dot", () => { map.getCanvas().style.cursor = pickMode ? "crosshair" : ""; });
 }
 
 function createNavigationMarker() {
@@ -744,27 +812,69 @@ async function inspectMap(event) {
   }
 }
 
+function keepPopupClearOfInterface() {
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      const element = popup?.getElement();
+      if (!element || !popup?.isOpen()) return;
+
+      const rect = element.getBoundingClientRect();
+      const journeyPanel = document.querySelector("#journeyPanel")?.getBoundingClientRect();
+      const mapTools = document.querySelector(".map-tools")?.getBoundingClientRect();
+      const attribution = document.querySelector(".maplibregl-ctrl-bottom-right")?.getBoundingClientRect();
+      const isMobile = window.innerWidth <= 700;
+      const safeLeft = isMobile ? 12 : Math.max(12, (journeyPanel?.right ?? 0) + 12);
+      const safeTop = isMobile ? Math.max(12, (journeyPanel?.bottom ?? 0) + 12) : 12;
+      const safeRight = isMobile
+        ? window.innerWidth - 12
+        : Math.min(window.innerWidth - 12, (mapTools?.left ?? window.innerWidth) - 12);
+      const safeBottom = Math.min(window.innerHeight - 12, (attribution?.top ?? window.innerHeight) - 12);
+      let shiftX = 0;
+      let shiftY = 0;
+
+      if (rect.left < safeLeft) shiftX = safeLeft - rect.left;
+      else if (rect.right > safeRight) shiftX = safeRight - rect.right;
+      if (rect.top < safeTop) shiftY = safeTop - rect.top;
+      else if (rect.bottom > safeBottom) shiftY = safeBottom - rect.bottom;
+
+      if (Math.abs(shiftX) > 1 || Math.abs(shiftY) > 1) {
+        const canvas = map.getCanvas();
+        const nextCenter = map.unproject([
+          canvas.clientWidth / 2 - shiftX,
+          canvas.clientHeight / 2 - shiftY,
+        ]);
+        map.jumpTo({ center: nextCenter });
+      }
+    });
+  });
+}
+
 function showPlacePopup(place, building = null) {
   popup?.remove();
+  document.body.classList.add("place-popup-open");
   const node = document.createElement("section");
   node.className = "place-popup";
   const height = Number(building?.height_eff);
   const floors = Number(building?.floors);
-  const detail = place.road_address || place.address || (
-    Number.isFinite(height)
-      ? `높이 ${height.toFixed(1)}m${floors > 0 ? ` · 지상 ${Math.round(floors)}층` : ""}`
-      : "노원구 지도 위치"
-  );
+  const address = String(place.road_address || place.address || "").trim();
+  const showAddress = address && address.replace(/\s+/g, " ") !== String(place.name).trim().replace(/\s+/g, " ");
+  const buildingMeta = Number.isFinite(height)
+    ? `높이 ${height.toFixed(1)}m${floors > 0 ? ` · 지상 ${Math.round(floors)}층` : ""}`
+    : "";
+  const buildingAction = building
+    ? '<button type="button" data-building-view><i data-lucide="boxes"></i><span>입체 보기</span></button>'
+    : "";
   node.innerHTML = `
     <header>
-      <span><small>${escapeHtml(place.cat || "장소")}</small><strong>${escapeHtml(place.name)}</strong></span>
+      <span class="place-popup-title"><small>${escapeHtml(place.cat || "장소")}</small><strong>${escapeHtml(place.name)}</strong></span>
       <button class="icon-button" type="button" data-popup-close aria-label="장소 정보 닫기"><i data-lucide="x"></i></button>
     </header>
-    <p>${escapeHtml(detail)}</p>
-    <div class="place-popup-actions">
+    ${showAddress ? `<p class="place-popup-address">${escapeHtml(address)}</p>` : ""}
+    ${buildingMeta ? `<p class="place-popup-meta">${escapeHtml(buildingMeta)}</p>` : ""}
+    <div class="place-popup-actions" data-count="${building ? 3 : 2}">
       <button type="button" data-endpoint="origin"><i data-lucide="circle-dot"></i><span>출발</span></button>
       <button type="button" data-endpoint="destination"><i data-lucide="map-pin"></i><span>도착</span></button>
-      <button type="button" data-building-view><i data-lucide="boxes"></i><span>3D 높이</span></button>
+      ${buildingAction}
     </div>`;
   refreshIcons(node);
   node.addEventListener("click", (event) => {
@@ -780,8 +890,45 @@ function showPlacePopup(place, building = null) {
     }
     if (event.target.closest("[data-popup-close]")) popup?.remove();
   });
-  popup = new window.maplibregl.Popup({ closeButton: false, offset: 18, maxWidth: "310px" })
+  popup = new window.maplibregl.Popup({ closeButton: false, offset: 18, maxWidth: "330px" })
     .setLngLat([place.lon, place.lat])
+    .setDOMContent(node)
+    .addTo(map);
+  popup.on("close", () => document.body.classList.remove("place-popup-open"));
+  keepPopupClearOfInterface();
+}
+
+function showCoolingPopup(feature) {
+  popup?.remove();
+  const properties = feature.properties ?? {};
+  const [lon, lat] = feature.geometry.coordinates;
+  const distance = Math.max(0, Math.round(Number(properties.distance_from_route_m) || 0));
+  const node = document.createElement("section");
+  node.className = "place-popup cooling-popup";
+  node.innerHTML = `
+    <header>
+      <span><small>공식 무더위쉼터 후보</small><strong>${escapeHtml(properties.name)}</strong></span>
+      <button class="icon-button" type="button" data-popup-close aria-label="쉼터 정보 닫기"><i data-lucide="x"></i></button>
+    </header>
+    <p>${escapeHtml(properties.address || "주소 정보 없음")}</p>
+    <dl class="cooling-popup-facts">
+      <div><dt>시설</dt><dd>${escapeHtml(properties.facility_type || "미분류")}</dd></div>
+      <div><dt>경로에서</dt><dd>약 ${distance}m</dd></div>
+    </dl>
+    <p class="cooling-popup-note">공공시설 후보만 표시합니다. 실제 개방·운영 여부는 방문 전에 확인하세요.</p>
+    <a class="cooling-popup-source" data-cooling-source target="_blank" rel="noreferrer">
+      <span>${escapeHtml(properties.source || "서울 열린데이터광장")}</span><i data-lucide="external-link"></i>
+    </a>`;
+  const sourceLink = node.querySelector("[data-cooling-source]");
+  const sourceUrl = String(properties.source_url ?? "");
+  if (/^https:\/\//i.test(sourceUrl)) sourceLink.href = sourceUrl;
+  else sourceLink.hidden = true;
+  node.addEventListener("click", (event) => {
+    if (event.target.closest("[data-popup-close]")) popup?.remove();
+  });
+  refreshIcons(node);
+  popup = new window.maplibregl.Popup({ closeButton: false, offset: 18, maxWidth: "310px" })
+    .setLngLat([lon, lat])
     .setDOMContent(node)
     .addTo(map);
 }
@@ -812,13 +959,22 @@ export function initMap(options = {}) {
     if (lastState) {
       renderEndpoints(lastState);
       renderRoutes(lastState, "load");
+      renderCoolingStops(lastState);
       if (lastState.shadeData) renderShade(lastState);
     }
   });
 
   map.on("click", (event) => {
-    const routeLayers = ["route-alternatives-line", "route-selected-main"].filter((id) => map.getLayer(id));
-    if (routeLayers.length && map.queryRenderedFeatures(event.point, { layers: routeLayers }).length) return;
+    const interactiveLayers = [
+      "route-alternatives-line",
+      "route-selected-main",
+      "cooling-stop-dot",
+      "cooling-stop-symbol",
+    ].filter((id) => map.getLayer(id));
+    if (
+      interactiveLayers.length
+      && map.queryRenderedFeatures(event.point, { layers: interactiveLayers }).length
+    ) return;
     if (pickMode) {
       onMapPick({ lat: event.lngLat.lat, lon: event.lngLat.lng, label: "지도에서 선택한 위치" }, pickMode);
       setPickMode(null);

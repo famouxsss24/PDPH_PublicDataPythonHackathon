@@ -570,7 +570,8 @@ body[data-theme="light"] .return-command small { color: var(--ink-500); }
   .height-legend {
     top: auto;
     right: auto;
-    bottom: 28px;
+    /* Leave room for MapLibre attribution on narrow screens. */
+    bottom: 64px;
     left: 8px;
     width: 174px;
   }

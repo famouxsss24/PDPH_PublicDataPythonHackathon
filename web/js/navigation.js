@@ -15,10 +15,13 @@ const LOW_POWER = window.matchMedia("(max-width: 700px)").matches
   || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4)
   || (navigator.deviceMemory && navigator.deviceMemory <= 4);
 const FRAME_INTERVAL = LOW_POWER ? 40 : 30;
+const PREVIEW_DURATION_MS = 52000;
 const MAP_TURN_TYPES = new Set(["좌회전", "우회전", "유턴"]);
 const elements = {};
 let previewFrame = 0;
-let previewStarted = 0;
+let previewElapsed = 0;
+let previewLastTimestamp = 0;
+let previewSpeed = 1;
 let geolocationWatch = null;
 let routeTrack = null;
 let lastNearbyPoint = null;
@@ -173,6 +176,7 @@ function updateManeuver(progress) {
 async function updateNearbyPlaces(point, { force = false } = {}) {
   const now = performance.now();
   const moved = lastNearbyPoint ? haversine(lastNearbyPoint, point) : Infinity;
+  if (!force && navigationMode === "preview" && now - lastNearbyAt < 900) return;
   if (!force && moved < 60 && now - lastNearbyAt < 3500) return;
   const token = ++nearbyToken;
   lastNearbyPoint = point;
@@ -194,8 +198,10 @@ function animatePreview(now) {
     return;
   }
   lastVisualUpdate = now;
-  const elapsed = now - previewStarted;
-  const progress = Math.min(1, elapsed / 52000);
+  const delta = previewLastTimestamp ? Math.min(250, now - previewLastTimestamp) : 0;
+  previewLastTimestamp = now;
+  previewElapsed += delta * previewSpeed;
+  const progress = Math.min(1, previewElapsed / PREVIEW_DURATION_MS);
   const position = pointAt(progress);
   if (!position) return;
   setNavigationPoint(position.point, position.bearing, true);
@@ -216,6 +222,10 @@ function syncPreviewButton() {
   elements.preview.innerHTML = previewing
     ? '<i data-lucide="locate-fixed"></i><span>실시간 안내</span>'
     : '<i data-lucide="play"></i><span>경로 미리보기</span>';
+  elements.speedControl.hidden = !previewing;
+  for (const button of elements.speedButtons) {
+    button.setAttribute("aria-checked", String(Number(button.dataset.previewSpeed) === previewSpeed));
+  }
   refreshIcons(elements.preview);
 }
 
@@ -228,15 +238,25 @@ function liveModeLabel() {
 
 function syncNavigationMode() {
   document.body.dataset.navigationMode = navigationMode;
-  elements.mode.textContent = navigationMode === "live" ? liveModeLabel() : "경로 미리보기";
+  elements.mode.textContent = navigationMode === "live"
+    ? liveModeLabel()
+    : `경로 미리보기 · ${previewSpeed}배속`;
   syncPreviewButton();
+}
+
+function setPreviewSpeed(value) {
+  const speed = Number(value);
+  if (![1, 2, 4, 8, 16].includes(speed)) return;
+  previewSpeed = speed;
+  if (navigationMode === "preview") syncNavigationMode();
 }
 
 function startPreview() {
   if (!routeTrack) return;
   cancelAnimationFrame(previewFrame);
   navigationMode = "preview";
-  previewStarted = performance.now();
+  previewElapsed = 0;
+  previewLastTimestamp = 0;
   lastVisualUpdate = 0;
   syncNavigationMode();
   previewFrame = requestAnimationFrame(animatePreview);
@@ -246,6 +266,8 @@ function returnToLive() {
   cancelAnimationFrame(previewFrame);
   previewFrame = 0;
   navigationMode = "live";
+  previewElapsed = 0;
+  previewLastTimestamp = 0;
   syncNavigationMode();
   if (lastLivePosition) {
     setNavigationPoint(lastLivePosition.point, lastLivePosition.bearing, true);
@@ -321,6 +343,8 @@ function stopNavigation() {
   previewFrame = 0;
   routeTrack = null;
   navigationMode = "live";
+  previewElapsed = 0;
+  previewLastTimestamp = 0;
   locationState = "waiting";
   lastLivePosition = null;
   lastNearbyPoint = null;
@@ -364,9 +388,14 @@ export function initNavigation() {
   elements.progress = document.querySelector("#navigationProgress");
   elements.bar = document.querySelector("#navigationProgressBar");
   elements.preview = document.querySelector("#previewToggle");
+  elements.speedControl = document.querySelector("#previewSpeedControl");
+  elements.speedButtons = [...document.querySelectorAll("[data-preview-speed]")];
   elements.recenter = document.querySelector("#recenterNavigation");
 
   elements.preview.addEventListener("click", togglePreview);
+  for (const button of elements.speedButtons) {
+    button.addEventListener("click", () => setPreviewSpeed(button.dataset.previewSpeed));
+  }
   elements.recenter.addEventListener("click", () => {
     recenterNavigation();
     wakeNavigationUi();

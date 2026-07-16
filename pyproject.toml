@@ -12,6 +12,7 @@ dependencies = [
     "networkx",
     "fastapi",
     "uvicorn",
+    "requests",
     "psycopg2-binary",
     "geoalchemy2",
     "statsmodels",

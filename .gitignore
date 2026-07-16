@@ -5,6 +5,7 @@ __pycache__/
 data/raw/
 dataset/
 cache/
+tmp/
 docs/학습노트.md
 docs/HANDOFF.md
 docs/IDEAS.md

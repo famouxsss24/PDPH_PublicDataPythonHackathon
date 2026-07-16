@@ -9,11 +9,9 @@
   <link rel="dns-prefetch" href="https://b.basemaps.cartocdn.com">
   <link rel="dns-prefetch" href="https://c.basemaps.cartocdn.com">
   <link rel="preconnect" href="https://unpkg.com" crossorigin>
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="prefetch" href="./3d.html">
   <link rel="prefetch" href="./css/3d.css" as="style">
   <link rel="prefetch" href="./js/3d.js?v=20260715c" as="script">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="./css/tokens.css">
   <link rel="stylesheet" href="./css/layout.css">
@@ -29,7 +27,7 @@
           <span class="brand-mark" aria-hidden="true"><i data-lucide="route"></i></span>
           <span><strong>그늘로</strong><small>NOWON SHADE NAVI</small></span>
         </a>
-        <span class="data-badge">8월 6일 시뮬레이션</span>
+        <span class="data-badge">맑은 하늘 기준</span>
       </header>
 
       <form id="routePlanner" class="route-editor" autocomplete="off">
@@ -120,10 +118,47 @@
               <span>밤에는 최단 경로를 안내합니다.</span>
             </div>
 
-            <div id="routeOptions" class="route-options" role="radiogroup" aria-label="경로 옵션"></div>
-            <div id="routeInsight" class="route-insight" aria-live="polite"></div>
+            <section id="heatCarePanel" class="heat-care-panel" data-active="false" data-heat-alert="false" aria-label="현재 날씨와 햇빛 노출 안내">
+              <div id="heatCarePrompt" class="heat-care-prompt">
+                <p class="heat-care-index"><span>WEATHER</span><strong id="heatCareWeather" aria-live="polite">현재 날씨 확인 중</strong></p>
+                <div class="heat-care-lead">
+                  <span class="heat-care-sun" aria-hidden="true"><i data-lucide="sun"></i></span>
+                  <div>
+                    <h2 id="heatCareTitle">그늘이 많은 경로를 비교해 보세요.</h2>
+                    <p id="heatCareDescription">현재 체감온도를 확인하고 있습니다. 물과 양산·모자를 챙겨주세요.</p>
+                  </div>
+                </div>
+                <ul class="heat-care-kit" aria-label="외출 전 준비">
+                  <li><i data-lucide="droplets"></i><span>물 챙기기</span></li>
+                  <li><i data-lucide="umbrella"></i><span>양산·모자</span></li>
+                  <li><i data-lucide="clock-3"></i><span>시간 바꾸기</span></li>
+                </ul>
+                <div class="heat-care-actions">
+                  <button id="heatCareContinue" class="heat-care-primary" type="button">
+                    이동 경로 비교하기 <i data-lucide="arrow-right"></i>
+                  </button>
+                  <button id="heatCareReviewTime" class="heat-care-secondary" type="button">출발 시각 비교하기</button>
+                </div>
+              </div>
 
-            <div class="sheet-footer">
+              <div id="heatCareControls" class="heat-care-controls" hidden>
+                <div class="heat-care-control-copy">
+                  <p class="eyebrow">필수 보행 모드</p>
+                  <strong>일사 노출 부담 비교</strong>
+                </div>
+                <div class="heat-mode-switch" role="radiogroup" aria-label="보행 모드">
+                  <button type="button" role="radio" data-heat-mode="default" aria-checked="false">일반</button>
+                  <button type="button" role="radio" data-heat-mode="elder" aria-checked="true">어르신 동행</button>
+                </div>
+                <p class="heat-model-note">맑은 하늘 그림자 기반 예상 노출량</p>
+                <p id="heatCareFallback" class="heat-care-fallback" hidden>정적 스냅샷에서는 부담 적산이 생략됩니다. 기본 서버 실행에서 확인하세요.</p>
+              </div>
+            </section>
+
+            <div id="routeOptions" class="route-options heat-care-dependent" role="radiogroup" aria-label="경로 옵션" hidden></div>
+            <div id="routeInsight" class="route-insight heat-care-dependent" aria-live="polite" hidden></div>
+
+            <div class="sheet-footer heat-care-dependent" hidden>
               <a id="open3d" class="secondary-command" href="./3d.html" target="_blank" rel="noreferrer">
                 <i data-lucide="boxes"></i><span>3D 보기</span>
               </a>
@@ -168,12 +203,13 @@
       </header>
       <input id="shadowRange" type="range" min="7" max="18" step="1" value="14" aria-label="그림자 시각">
       <div class="shadow-ticks" aria-hidden="true"><span>07</span><span>12</span><span>18</span></div>
-      <p>8월 6일 태양 위치와 건물 높이로 계산한 시간별 그림자</p>
+      <p>태양 위치와 건물 높이로 계산한 시간별 그림자</p>
     </section>
 
     <div id="routeLegend" class="route-legend" hidden>
       <span><i class="legend-line is-shade"></i>그늘</span>
       <span><i class="legend-line is-sun"></i>햇빛</span>
+      <span id="coolingLegend" hidden><i class="legend-shelter">+</i>공식 쉼터 후보</span>
     </div>
 
     <section id="navigationView" class="navigation-hud" aria-label="도보 길찾기" hidden>
@@ -204,6 +240,16 @@
           <strong id="navigationProgress">남은 0m · 0분</strong>
         </div>
         <div class="navigation-progress-track" aria-hidden="true"><span id="navigationProgressBar"></span></div>
+        <div id="previewSpeedControl" class="preview-speed-control" hidden>
+          <span>미리보기 속도</span>
+          <div role="radiogroup" aria-label="경로 미리보기 배속">
+            <button type="button" role="radio" data-preview-speed="1" aria-checked="true">1×</button>
+            <button type="button" role="radio" data-preview-speed="2" aria-checked="false">2×</button>
+            <button type="button" role="radio" data-preview-speed="4" aria-checked="false">4×</button>
+            <button type="button" role="radio" data-preview-speed="8" aria-checked="false">8×</button>
+            <button type="button" role="radio" data-preview-speed="16" aria-checked="false">16×</button>
+          </div>
+        </div>
         <div class="navigation-bottom-actions">
           <button id="previewToggle" class="secondary-command" type="button" aria-pressed="false">
             <i data-lucide="play"></i><span>경로 미리보기</span>

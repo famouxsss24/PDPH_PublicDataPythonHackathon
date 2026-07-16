@@ -1,5 +1,5 @@
 :root {
-  --font-sans: Pretendard, "Malgun Gothic", sans-serif;
+  --font-sans: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
   --ink-950: #18211c;
   --ink-800: #29342d;
   --ink-650: #4e5b52;
