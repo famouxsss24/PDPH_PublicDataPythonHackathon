@@ -7,12 +7,57 @@ import pandas as pd
 
 from gneulro.config import CRS_METRIC, CRS_WGS
 
+
+def _resolve_data_path(path: str | Path) -> Path:
+    """입력 경로가 파일이 아니면 같은 폴더의 첫 .shp/.csv 파일을 찾아 반환한다."""
+    p = Path(path)
+    if p.exists():
+        return p
+
+    if p.suffix.lower() == ".shp":
+        candidates = sorted(p.parent.glob("*.shp"))
+        if candidates:
+            return candidates[0]
+    elif p.suffix.lower() == ".csv":
+        candidates = sorted(p.parent.glob("*.csv"))
+        if candidates:
+            return candidates[0]
+
+    if p.suffix:
+        raise FileNotFoundError(f"데이터 파일을 찾지 못했습니다: {p}")
+
+    if p.name == "buildings":
+        candidates = sorted(p.parent.glob("*.shp"))
+        if candidates:
+            return candidates[0]
+
+    raise FileNotFoundError(f"데이터 경로를 찾지 못했습니다: {p}")
+
 # 배포본마다 다른 컬럼명 후보 (매핑 결과는 로드 시 출력 — 다르면 사용자에게 확인)
 # GIS건물통합정보(AL_D010) 실측 확인: 높이=A16(m, 다수 결측), 지상층수=A26. A15는 면적이라 층수 아님.
 HEIGHT_CANDIDATES = ["height", "HEIGHT", "A16", "BULD_HG", "높이"]
 FLOOR_CANDIDATES = ["GRND_FLR", "grnd_flr", "GROUND_FLO", "A26", "지상층수", "층수"]
-LAT_CANDIDATES = ["위도", "lat", "LAT", "latitude", "Y좌표"]
-LON_CANDIDATES = ["경도", "lon", "lng", "LON", "longitude", "X좌표"]
+LAT_CANDIDATES = [
+    "위도",
+    "lat",
+    "LAT",
+    "latitude",
+    "Y좌표",
+    "좌표(위도)",
+    "위치_y",
+    "y",
+]
+LON_CANDIDATES = [
+    "경도",
+    "lon",
+    "lng",
+    "LON",
+    "longitude",
+    "X좌표",
+    "좌표(경도)",
+    "위치_x",
+    "x",
+]
 
 
 def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -25,6 +70,7 @@ def find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
 
 def read_csv_kr(path: str | Path, **kwargs) -> pd.DataFrame:
     """한국 공공 CSV를 utf-8로 읽고, 실패하면 cp949로 재시도한다."""
+    path = _resolve_data_path(path)
     try:
         return pd.read_csv(path, encoding="utf-8", **kwargs)
     except UnicodeDecodeError:
@@ -33,9 +79,11 @@ def read_csv_kr(path: str | Path, **kwargs) -> pd.DataFrame:
 
 def read_shp_metric(path: str | Path) -> gpd.GeoDataFrame:
     """쉐이프파일을 읽어 계산용 좌표계(EPSG:5186)로 변환해 반환한다."""
+    path = _resolve_data_path(path)
     gdf = gpd.read_file(path)
     if gdf.crs is None:
-        raise ValueError(f"좌표계 정보가 없는 쉐이프파일입니다: {path}")
+        print(f"[io] 경고: {path}에 좌표계 정보가 없어 EPSG:4326로 가정합니다.")
+        gdf = gdf.set_crs(CRS_WGS, allow_override=True)
     return gdf.to_crs(CRS_METRIC)
 
 
